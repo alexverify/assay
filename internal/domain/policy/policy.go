@@ -1,0 +1,92 @@
+// Package policy defines the rules a team can enforce over an inventory, and
+// the pure evaluation that turns a locked + current snapshot into a pass/fail
+// decision. It is part of the domain core: no IO. Loading the policy file lives
+// in the policystore adapter.
+package policy
+
+import (
+	"github.com/alexverify/agentguard/internal/domain/finding"
+	"github.com/alexverify/agentguard/internal/domain/lockfile"
+)
+
+// Policy is the team-configurable gate applied by `verify --ci`.
+type Policy struct {
+	// FailOnSeverity is the lowest severity of a newly introduced finding that
+	// fails the gate (default: high).
+	FailOnSeverity finding.Severity `json:"failOnSeverity,omitempty"`
+	// IgnoreRules suppresses specific rule IDs (accepted false positives).
+	IgnoreRules []string `json:"ignoreRules,omitempty"`
+	// RequireApproval fails any artifact not marked approved in the lockfile.
+	RequireApproval bool `json:"requireApproval,omitempty"`
+}
+
+// Default is the policy used when no policy file is present.
+func Default() Policy {
+	return Policy{FailOnSeverity: finding.SeverityHigh}
+}
+
+// Normalize fills defaults for zero-value fields so a partial policy file is
+// still well-defined.
+func (p Policy) Normalize() Policy {
+	if p.FailOnSeverity == "" {
+		p.FailOnSeverity = finding.SeverityHigh
+	}
+	return p
+}
+
+// Violation is a single reason the gate failed.
+type Violation struct {
+	Kind     string           `json:"kind"` // "finding" | "unapproved"
+	ID       string           `json:"id,omitempty"`
+	Name     string           `json:"name,omitempty"`
+	RuleID   string           `json:"ruleId,omitempty"`
+	Severity finding.Severity `json:"severity,omitempty"`
+	Detail   string           `json:"detail,omitempty"`
+}
+
+// Result is the outcome of evaluating a policy.
+type Result struct {
+	Violations []Violation `json:"violations"`
+}
+
+// OK reports whether the gate passed.
+func (r Result) OK() bool { return len(r.Violations) == 0 }
+
+// Evaluate gates the current snapshot against the policy, relative to the
+// locked snapshot. "New" findings are those not already present in locked, so
+// previously accepted issues don't re-fail a build.
+func Evaluate(p Policy, locked, current lockfile.Lockfile) Result {
+	p = p.Normalize()
+
+	ignored := make(map[string]bool, len(p.IgnoreRules))
+	for _, r := range p.IgnoreRules {
+		ignored[r] = true
+	}
+
+	var violations []Violation
+	for _, f := range lockfile.NewFindings(locked, current, p.FailOnSeverity) {
+		if ignored[f.RuleID] {
+			continue
+		}
+		violations = append(violations, Violation{
+			Kind:     "finding",
+			RuleID:   f.RuleID,
+			Severity: f.Severity,
+			Detail:   f.File,
+		})
+	}
+
+	if p.RequireApproval {
+		for _, e := range current.Artifacts {
+			if e.Approval == nil || e.Approval.Status != "approved" {
+				violations = append(violations, Violation{
+					Kind: "unapproved",
+					ID:   e.ID,
+					Name: e.Name,
+				})
+			}
+		}
+	}
+
+	return Result{Violations: violations}
+}
