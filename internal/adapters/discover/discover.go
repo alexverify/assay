@@ -42,8 +42,9 @@ func (m *Multi) Discover(ctx context.Context, scopes []ports.Scope) ([]artifact.
 	return out, nil
 }
 
-// Default returns discoverers for every supported tool. Claude Code is fully
-// implemented; the others are documented stubs (see stubs.go).
+// Default returns discoverers for every supported tool. Claude Code, Cursor,
+// and Gemini are implemented; Codex and OpenCode are documented stubs
+// (see stubs.go).
 func Default() *Multi {
 	return NewMulti(
 		NewClaudeCode(),

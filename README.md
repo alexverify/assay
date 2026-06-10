@@ -87,7 +87,7 @@ Requires Go 1.25+. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 | Component | What | Status |
 |---|---|---|
-| 1 — `scan`/`verify`/lockfile | Read-only inventory, hashing, analysis, drift | **implemented** (Claude Code; more tools seamed) |
+| 1 — `scan`/`verify`/lockfile | Read-only inventory, hashing, analysis, drift | **implemented** (Claude Code, Cursor, Gemini; Codex/OpenCode seamed) |
 | 2 — `wrap` | MCP interposition supervisor, OS sandbox, egress proxy + redaction | designed, seamed |
 | 3 — control plane | Policy API, signature/trust registry, audit log, CI Action, dashboard | designed, seamed |
 
