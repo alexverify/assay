@@ -18,4 +18,4 @@ A versioned Semgrep ruleset used by the optional Semgrep analyzer
 implemented) runs `semgrep --json --config rules/ <artifact>`, mapping results
 to `finding.Finding`. When semgrep is absent it contributes nothing — the native
 matchers remain authoritative. See
-[ADR-0003](../docs/architecture/adr/0003-semgrep-optional-accelerator.md).
+[decisions.md](../docs/architecture/decisions.md).

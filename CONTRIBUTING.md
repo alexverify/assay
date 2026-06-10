@@ -11,9 +11,9 @@ value clarity, determinism, and a small dependency surface over cleverness.
    network, or a subprocess, it belongs in an adapter behind a `ports`
    interface. See [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md).
 2. **Standard library first.** The MVP core has zero external dependencies
-   ([ADR-0002](docs/architecture/adr/0002-standard-library-only.md)). Adding a
-   dependency requires a short ADR explaining why the standard library is
-   insufficient and why the dependency is trustworthy.
+   (see [decisions.md](docs/architecture/decisions.md)). Adding a dependency
+   should be justified in your PR: why the standard library is insufficient and
+   why the dependency is trustworthy.
 3. **Determinism.** Sort outputs, inject the clock (`ports.Clock`), and derive
    stable IDs so lockfiles diff cleanly and tests are reproducible.
 4. **Degrade, don't crash.** Unknown or unresolvable inputs become findings, not

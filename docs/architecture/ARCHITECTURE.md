@@ -1,9 +1,8 @@
 # agentguard architecture
 
-This document explains how the codebase is organized, why, and how to extend
-it. It is the canonical reference for contributors. For the product vision and
-the full three-component roadmap, see the
-[MVP build spec](../superpowers/specs/2026-06-10-agentguard-architecture-design.md).
+How the codebase is organized, how a scan actually runs, and where to add code.
+Start here if you're contributing. For *why* things are built this way, see
+[decisions.md](decisions.md); for what the tool does, see the [README](../../README.md).
 
 ## What agentguard is
 
@@ -180,6 +179,6 @@ See each directory's `README.md` / `doc.go` for the specific seam.
 4. **Determinism everywhere.** Sorted outputs, injected clocks, stable IDs — so
    lockfiles diff cleanly and tests are reproducible.
 5. **Minimal dependencies.** The MVP core uses only the Go standard library
-   (see [ADR-0002](adr/0002-standard-library-only.md)). A supply-chain tool
-   should be auditable to the byte.
+   (see [decisions.md](decisions.md)). A supply-chain tool should be auditable
+   to the byte.
 ```

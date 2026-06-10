@@ -68,8 +68,9 @@ be auditable to the byte.
 
 Read [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) for
 the package map, data flow, testing strategy, and how to extend it (adding a
-tool, resolver, or analyzer is a localized change behind one interface).
-Decisions are recorded as [ADRs](docs/architecture/adr/).
+tool, resolver, or analyzer is a localized change behind one interface). The
+key design choices and their trade-offs are written up in
+[docs/architecture/decisions.md](docs/architecture/decisions.md).
 
 ## Development
 
