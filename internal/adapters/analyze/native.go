@@ -63,8 +63,33 @@ var rules = []rule{
 	},
 	{
 		id: "PROMPT-INJECTION", severity: finding.SeverityHigh, owasp: "ASK-07",
-		re:      regexp.MustCompile(`(?i)(ignore (all )?previous instructions|auto[- ]approve|without (asking|confirmation)|do not (ask|tell|mention))`),
+		re:      regexp.MustCompile(`(?i)(ignore (all )?previous instructions|auto[- ]approve|without (asking|confirmation)|do not (ask|tell|mention)|bypass (the )?approval|skip (the )?confirmation|disable safety)`),
 		explain: "contains consent-bypass or prompt-injection language",
+	},
+	{
+		id: "SSRF-CLOUD-METADATA", severity: finding.SeverityCritical, owasp: "ASK-08",
+		re:      regexp.MustCompile(`(?i)(169\.254\.169\.254|metadata\.google\.internal|metadata\.azure\.(com|net))`),
+		explain: "accesses a cloud instance metadata endpoint (SSRF / credential theft)",
+	},
+	{
+		id: "EXFIL-SUSPICIOUS-HOST", severity: finding.SeverityHigh, owasp: "ASK-04",
+		re:      regexp.MustCompile(`(?i)(webhook\.site|pastebin\.com|requestbin|ngrok\.(io|app)|transfer\.sh|0x0\.st|termbin\.com)`),
+		explain: "sends data to a host commonly used for exfiltration",
+	},
+	{
+		id: "REVERSE-SHELL", severity: finding.SeverityCritical, owasp: "ASK-01",
+		re:      regexp.MustCompile(`(?i)(/dev/tcp/|\bnc\b[^\n]*\s-e\b|\bncat\b[^\n]*\s-e\b|bash\s+-i\b|socat\b[^\n]*exec)`),
+		explain: "opens a reverse shell",
+	},
+	{
+		id: "ENCODED-EXEC", severity: finding.SeverityHigh, owasp: "ASK-05",
+		re:      regexp.MustCompile(`(?i)base64\s+(-d|--decode)\b[^\n]*\|\s*(ba)?sh\b`),
+		explain: "decodes a base64 blob and pipes it to a shell",
+	},
+	{
+		id: "WALLET-THEFT", severity: finding.SeverityHigh, owasp: "ASK-06",
+		re:      regexp.MustCompile(`(?i)(wallet\.dat|\belectrum\b|metamask|\bmnemonic\b|seed phrase)`),
+		explain: "references cryptocurrency wallet or seed-phrase material",
 	},
 }
 
