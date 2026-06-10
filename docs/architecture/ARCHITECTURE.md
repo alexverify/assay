@@ -70,13 +70,14 @@ interface that can be faked, swapped, or degraded without touching the core.
 | `internal/app/apptest` | application | In-memory fakes implementing every port, for tests. |
 | `internal/adapters/discover` | adapter | Per-tool config discovery (Claude Code implemented; others stubbed). |
 | `internal/adapters/parse` | adapter | JSON normalizer; JSONC/TOML are documented seams. |
-| `internal/adapters/resolve` | adapter | Source → concrete code (local/inline done; npm/git/url stubbed). |
+| `internal/adapters/resolve` | adapter | Source → concrete pinned code: local, inline, npm, git, url. |
 | `internal/adapters/hash` | adapter | Filesystem walk feeding the domain digest. |
 | `internal/adapters/analyze` | adapter | Native high-signal matchers + optional Semgrep accelerator. |
 | `internal/adapters/lockstore` | adapter | Atomic, deterministic `agentlock.json` read/write. |
 | `internal/adapters/sign` | adapter | ed25519 detached signatures. |
 | `internal/adapters/report` | adapter | Text and JSON reporters. |
 | `internal/cli` | adapter (driving) | Argument parsing, composition root, exit-code mapping. |
+| `internal/platform/run` | shared | Command-runner abstraction for shelling out (npm/git), with a fake. |
 | `internal/buildinfo` | shared | Build-time version metadata. |
 | `cmd/agentguard` | entrypoint | Thin `main`: signal handling, hand off to the CLI. |
 
