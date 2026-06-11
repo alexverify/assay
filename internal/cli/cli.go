@@ -68,6 +68,10 @@ func (a *App) Execute(ctx context.Context, args []string) int {
 		return a.runSign(ctx, rest)
 	case "key":
 		return a.runKey(ctx, rest)
+	case "wrap":
+		return a.runWrap(ctx, rest)
+	case "unwrap":
+		return a.runUnwrap(ctx, rest)
 	case "mcp-shim":
 		return a.runMCPShim(ctx, rest)
 	case "version", "-v", "--version":
@@ -97,6 +101,8 @@ Commands:
   approve   Mark artifact(s) as approved in the lockfile
   sign      Sign the lockfile with the local key
   key       Manage signing identity (show) and trusted keys (trust)
+  wrap      Route a tool's MCP servers through the auditing shim (--status to inspect)
+  unwrap    Restore the original MCP config
   version   Print the version
   help      Show this help
 
