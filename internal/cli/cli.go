@@ -118,13 +118,15 @@ func reporter(jsonOut bool) ports.Reporter {
 	return report.Text{}
 }
 
-// scanService assembles the scan use case from concrete adapters.
-func (a *App) scanService(jsonOut bool) *scan.Service {
+// scanService assembles the scan use case from concrete adapters. rulesDir
+// points the optional Semgrep accelerator at a rules pack; an absent dir is a
+// silent no-op (the native matchers are authoritative).
+func (a *App) scanService(jsonOut bool, rulesDir string) *scan.Service {
 	return scan.New(scan.Deps{
 		Discoverer: discover.Default(),
 		Resolver:   resolve.NewRouter(),
 		Hasher:     hash.New(),
-		Analyzer:   analyze.NewChain(analyze.NewNative(), analyze.NewSemgrep("rules")),
+		Analyzer:   analyze.NewChain(analyze.NewNative(), analyze.NewSemgrep(rulesDir)),
 		Lock:       lockstore.New(),
 		Reporter:   reporter(jsonOut),
 		Clock:      a.Clock,
@@ -134,9 +136,9 @@ func (a *App) scanService(jsonOut bool) *scan.Service {
 // verifyService assembles the verify use case. It reuses a scan service purely
 // as the current-state builder (only Build is called, never Run). The verifier
 // may be nil when the caller never applies a signature policy (diff).
-func (a *App) verifyService(jsonOut bool, verifier ports.LockfileVerifier) *verify.Service {
+func (a *App) verifyService(jsonOut bool, rulesDir string, verifier ports.LockfileVerifier) *verify.Service {
 	return verify.New(verify.Deps{
-		Builder:  a.scanService(jsonOut),
+		Builder:  a.scanService(jsonOut, rulesDir),
 		Lock:     lockstore.New(),
 		Reporter: reporter(jsonOut),
 		Verifier: verifier,

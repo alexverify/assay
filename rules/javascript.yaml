@@ -1,0 +1,37 @@
+# JavaScript/TypeScript rules for the optional Semgrep accelerator.
+rules:
+  - id: eval-fetched-body
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      eval of a network response body — remote code execution by design, and a
+      rug-pull primitive (the server can change what runs at any time).
+    metadata:
+      owasp-agentic: ASK-01
+    pattern-either:
+      - pattern: eval(await $RES.text())
+      - pattern: eval($RES.body)
+
+  - id: process-env-serialized
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      The entire process.env serialized — combined with any outbound call this
+      is the secret-exfiltration shape (API keys, tokens, cloud creds).
+    metadata:
+      owasp-agentic: ASK-04
+    pattern: JSON.stringify(process.env)
+
+  - id: child-process-interpolated-exec
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      child_process exec with an interpolated template string — command
+      injection if any interpolated part is attacker-influenced.
+    metadata:
+      owasp-agentic: ASK-03
+    pattern-either:
+      - pattern: exec(`...${$X}...`)
+      - pattern: execSync(`...${$X}...`)
+      - pattern: $CP.exec(`...${$X}...`)
+      - pattern: $CP.execSync(`...${$X}...`)

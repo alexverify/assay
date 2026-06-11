@@ -1,0 +1,45 @@
+# Python rules for the optional Semgrep accelerator. Language-aware checks the
+# native regex matchers can't express; severities map ERROR→high, WARNING→
+# medium, INFO→low (critical is reserved for native rules).
+rules:
+  - id: eval-remote-response
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Network response body passed to eval/exec — remote code execution by
+      design, and a rug-pull primitive (the server can change what runs at any
+      time).
+    metadata:
+      owasp-agentic: ASK-01
+    pattern-either:
+      - pattern: eval(requests.get(...).text)
+      - pattern: exec(requests.get(...).text)
+      - pattern: eval(urllib.request.urlopen(...).read())
+      - pattern: exec(urllib.request.urlopen(...).read())
+
+  - id: env-exfiltration
+    languages: [python]
+    severity: ERROR
+    message: >-
+      The whole process environment serialized into an outbound request —
+      the canonical secret-exfiltration shape (API keys, tokens, cloud creds).
+    metadata:
+      owasp-agentic: ASK-04
+    pattern-either:
+      - pattern: requests.post($URL, ..., data=os.environ, ...)
+      - pattern: requests.post($URL, ..., data=dict(os.environ), ...)
+      - pattern: requests.post($URL, ..., json=dict(os.environ), ...)
+
+  - id: subprocess-shell-true
+    languages: [python]
+    severity: WARNING
+    message: >-
+      subprocess invoked with shell=True — command injection if any argument is
+      attacker-influenced (e.g. derived from a prompt, file, or tool input).
+    metadata:
+      owasp-agentic: ASK-03
+    pattern-either:
+      - pattern: subprocess.run(..., shell=True, ...)
+      - pattern: subprocess.Popen(..., shell=True, ...)
+      - pattern: subprocess.call(..., shell=True, ...)
+      - pattern: subprocess.check_output(..., shell=True, ...)

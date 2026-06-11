@@ -23,6 +23,7 @@ type commonFlags struct {
 	global   *bool
 	lockfile *string
 	json     *bool
+	rules    *string
 }
 
 func bindCommon(fs *flag.FlagSet) commonFlags {
@@ -31,6 +32,7 @@ func bindCommon(fs *flag.FlagSet) commonFlags {
 		global:   fs.Bool("global", false, "also include the global (user-home) scope"),
 		lockfile: fs.String("lockfile", "agentlock.json", "lockfile path"),
 		json:     fs.Bool("json", false, "machine-readable JSON output"),
+		rules:    fs.String("rules", "rules", "semgrep rules pack dir (optional accelerator; ignored when absent)"),
 	}
 }
 
@@ -46,7 +48,7 @@ func (a *App) runScan(ctx context.Context, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
-	svc := a.scanService(*c.json)
+	svc := a.scanService(*c.json, *c.rules)
 	if _, err := svc.Run(ctx, scan.Options{
 		Scopes:       a.scopes(*c.path, *c.global),
 		LockfilePath: *c.lockfile,
@@ -78,7 +80,7 @@ func (a *App) runVerify(ctx context.Context, args []string) int {
 		return ExitError
 	}
 
-	svc := a.verifyService(*c.json, verifier)
+	svc := a.verifyService(*c.json, *c.rules, verifier)
 	res, err := svc.Run(ctx, verify.Options{
 		Scopes:       a.scopes(*c.path, *c.global),
 		LockfilePath: *c.lockfile,
@@ -116,7 +118,7 @@ func (a *App) runDiff(ctx context.Context, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
-	svc := a.verifyService(*c.json, nil)
+	svc := a.verifyService(*c.json, *c.rules, nil)
 	_, err := svc.Run(ctx, verify.Options{
 		Scopes:       a.scopes(*c.path, *c.global),
 		LockfilePath: *c.lockfile,
@@ -138,7 +140,7 @@ func (a *App) runList(ctx context.Context, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
-	svc := a.scanService(*c.json)
+	svc := a.scanService(*c.json, *c.rules)
 	lf, err := svc.Build(ctx, a.scopes(*c.path, *c.global))
 	if err != nil {
 		fmt.Fprintf(a.Stderr, "list: %v\n", err)

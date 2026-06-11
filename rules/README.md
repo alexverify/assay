@@ -1,21 +1,38 @@
-# rules/ — Semgrep rules pack (seam)
+# rules/ — Semgrep accelerator pack
 
-A versioned Semgrep ruleset used by the optional Semgrep analyzer
-(`internal/adapters/analyze/semgrep.go`). Empty today.
+Curated [Semgrep](https://semgrep.dev) rules that deepen `agentguard scan`'s
+static analysis with language-aware checks the native regex matchers can't
+express (e.g. `shell=True` subprocess calls, env-serialization exfil shapes,
+interpolated `child_process` exec).
 
-## Plan
+This layer is **optional and soft** by contract:
 
-- Per-language rules (JS/TS, Python, shell, Go) for MCP/skill security patterns:
-  remote code execution, exfiltration, consent-bypass, sensitive-path access.
-- Start by adapting public MCP/skill security rules; add custom rules for the
-  consent-bypass and exfil patterns the native matchers can't express.
-- Every rule maps to an OWASP Agentic Skills Top 10 category and a severity, so
-  Semgrep findings merge cleanly with native findings.
+- No `semgrep` on `PATH` → contributes nothing, never errors.
+- Rules dir absent (`--rules`, default `./rules`) → silent no-op.
+- Semgrep crash or unparseable output → silent no-op.
 
-## How it's wired
+The native matchers (internal/adapters/analyze/native.go) remain authoritative;
+they carry the critical-severity rules and require nothing but the binary.
 
-`analyze.NewSemgrep("rules")` resolves the `semgrep` binary on `PATH` and (once
-implemented) runs `semgrep --json --config rules/ <artifact>`, mapping results
-to `finding.Finding`. When semgrep is absent it contributes nothing — the native
-matchers remain authoritative. See
-[decisions.md](../docs/architecture/decisions.md).
+## Severity & taxonomy mapping
+
+| Semgrep | agentguard |
+|---|---|
+| `ERROR` | high |
+| `WARNING` | medium |
+| `INFO` | low |
+
+Critical is reserved for native rules — a semgrep rule that warrants critical
+impact should be promoted to a native matcher. Each rule's
+`metadata.owasp-agentic` (e.g. `ASK-01`) flows into the finding's OWASP field.
+Rule IDs surface namespaced as `SEMGREP-<ID>` (e.g. `SEMGREP-SUBPROCESS-SHELL-TRUE`)
+so they can be suppressed independently in `agentguard.policy.json` `ignoreRules`.
+
+## Validating changes
+
+```sh
+semgrep scan --validate --config rules/   # or: uvx semgrep scan --validate --config rules/
+```
+
+`internal/adapters/analyze/semgrep_test.go` guards the file format and the
+adapter's JSON mapping with a scripted runner — no semgrep needed for `make check`.
