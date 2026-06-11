@@ -1,17 +1,40 @@
-# action/ — GitHub composite Action (seam)
+# agentguard verify — GitHub Action
 
-A composite GitHub Action wrapping the `agentguard` binary for CI. Empty today.
+Runs `agentguard verify --ci` against your committed `agentlock.json`: fails
+the build on drift (rug pulls), unapproved artifacts, new findings over the
+policy threshold, or a missing/untrusted lockfile signature. The verify output
+lands in the job's step summary.
 
-## Plan
+## Usage
 
-The Action will:
+```yaml
+jobs:
+  agentguard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: alexverify/agentguard/action@v0.1.0
+```
 
-1. Install the pinned `agentguard` binary and verify its checksum.
-2. Pull org policy from the control plane (when configured).
-3. Run `agentguard verify --ci`, failing the build on drift, unsigned entries,
-   or new critical/high findings.
-4. Post a PR comment summarizing drift and findings.
+One tag pins both the action and the binary it installs: the pinned release
+binary is downloaded from this repository's releases and verified against the
+published `checksums.txt` before it runs. If you pin the action to a branch or
+SHA instead, set the `version` input explicitly.
 
-The same binary works in any CI; the Action is sugar. The stable exit-code
-contract (`0` clean, `1` drift/findings, `2` usage, `3` error) is what CI keys
-on — see [docs/architecture/ARCHITECTURE.md](../docs/architecture/ARCHITECTURE.md).
+## Inputs
+
+| Input | Default | What |
+|---|---|---|
+| `version` | the action's own ref | Release tag of the binary to install (e.g. `v0.1.0`) |
+| `path` | `.` | Project root to scan |
+| `lockfile` | `agentlock.json` | Lockfile path |
+| `policy` | `agentguard.policy.json` | Policy file applied by the gate |
+| `trusted-keys` | `agentguard.trustedkeys` | Trusted-keys registry for `requireSignature` |
+
+Exit codes are the binary's stable contract: `0` clean, `1` drift or policy
+violation, `2` usage error, `3` internal error. The same binary works in any
+CI; this Action is sugar — see
+[docs/architecture/ARCHITECTURE.md](../docs/architecture/ARCHITECTURE.md).
+
+Planned (with the control plane): org policy pull and a PR comment summarizing
+drift and findings.

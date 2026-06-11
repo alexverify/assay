@@ -84,6 +84,17 @@ A committed lockfile + policy + trusted keys + the `verify --ci` exit code give
 a small team "only approved, unmodified, clean, signed-by-us artifacts run
 here" with no infrastructure.
 
+### GitHub Action
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: alexverify/agentguard/action@v0.1.0
+```
+
+One tag pins the action and the checksum-verified binary it installs; see
+[action/README.md](action/README.md) for inputs.
+
 ## Requirements
 
 The binary itself has no runtime dependencies. To **pin and hash remote sources**
@@ -138,9 +149,9 @@ Requires Go 1.25+. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 | Component | What | Status |
 |---|---|---|
-| 1 — `scan`/`verify`/lockfile | Read-only inventory, hashing, analysis, drift | **implemented** (Claude Code, Cursor, Gemini, OpenCode, Codex) |
+| 1 — `scan`/`verify`/lockfile | Read-only inventory, hashing, analysis, drift, signing/trust, CI Action | **implemented** (Claude Code, Cursor, Gemini, OpenCode, Codex) |
 | 2 — `wrap` | MCP interposition supervisor, OS sandbox, egress proxy + redaction | designed, seamed |
-| 3 — control plane | Policy API, signature/trust registry, audit log, CI Action, dashboard | designed, seamed |
+| 3 — control plane | Policy API, audit log, approval workflow, dashboard | designed, seamed |
 
 ## License
 

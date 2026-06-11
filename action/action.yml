@@ -1,0 +1,93 @@
+# Composite Action wrapping `agentguard verify --ci`.
+# The binary version defaults to the ref this action is pinned at, so
+# `uses: alexverify/agentguard/action@v0.1.0` pins the action AND the binary
+# with a single tag, checksum-verified before it runs.
+name: agentguard verify
+description: >-
+  Verify the committed agentlock.json against the live environment — drift,
+  policy gate, approvals, and lockfile signature — and fail the build on
+  violations.
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  version:
+    description: >-
+      agentguard release tag to install (e.g. v0.1.0). Defaults to the ref the
+      action is pinned at; required when pinning the action to a branch or SHA.
+    default: ""
+  path:
+    description: Project root to scan.
+    default: "."
+  lockfile:
+    description: Lockfile path.
+    default: agentlock.json
+  policy:
+    description: Policy file applied by the gate.
+    default: agentguard.policy.json
+  trusted-keys:
+    description: Committed trusted-keys registry checked by requireSignature.
+    default: agentguard.trustedkeys
+
+runs:
+  using: composite
+  steps:
+    - name: Install agentguard (checksum-verified)
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        set -euo pipefail
+        version="${INPUT_VERSION:-${ACTION_REF}}"
+        case "$version" in
+          v[0-9]*) ;;
+          *) echo "::error::cannot derive a release version from ref '${version}'; set the 'version' input to an exact tag (e.g. v0.1.0)"; exit 1 ;;
+        esac
+        case "${RUNNER_OS}" in
+          Linux) os=linux ;;
+          macOS) os=darwin ;;
+          *) echo "::error::unsupported runner OS '${RUNNER_OS}' (need Linux or macOS)"; exit 1 ;;
+        esac
+        case "${RUNNER_ARCH}" in
+          X64) arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "::error::unsupported runner arch '${RUNNER_ARCH}'"; exit 1 ;;
+        esac
+        archive="agentguard_${version#v}_${os}_${arch}.tar.gz"
+        base="https://github.com/alexverify/agentguard/releases/download/${version}"
+        dir="$(mktemp -d)"
+        curl -fsSL --retry 3 -o "${dir}/${archive}" "${base}/${archive}"
+        curl -fsSL --retry 3 -o "${dir}/checksums.txt" "${base}/checksums.txt"
+        (cd "${dir}" && shasum -a 256 --check --ignore-missing --strict checksums.txt)
+        tar -xzf "${dir}/${archive}" -C "${dir}"
+        echo "${dir}" >> "${GITHUB_PATH}"
+        echo "installed agentguard ${version} (${os}/${arch})"
+
+    - name: agentguard verify --ci
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_LOCKFILE: ${{ inputs.lockfile }}
+        INPUT_POLICY: ${{ inputs.policy }}
+        INPUT_TRUSTED_KEYS: ${{ inputs['trusted-keys'] }}
+      run: |
+        set -uo pipefail
+        out="$(agentguard verify --ci \
+          --path "${INPUT_PATH}" \
+          --lockfile "${INPUT_LOCKFILE}" \
+          --policy "${INPUT_POLICY}" \
+          --trusted-keys "${INPUT_TRUSTED_KEYS}" 2>&1)"
+        code=$?
+        echo "${out}"
+        {
+          echo "### agentguard verify --ci (exit ${code})"
+          echo '```'
+          echo "${out}"
+          echo '```'
+        } >> "${GITHUB_STEP_SUMMARY}"
+        if [ "${code}" -ne 0 ]; then
+          echo "::error::agentguard verify --ci failed (exit ${code}) — drift or policy violation; see the step summary"
+        fi
+        exit "${code}"
