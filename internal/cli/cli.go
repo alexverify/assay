@@ -35,14 +35,15 @@ const (
 
 // App holds the IO streams and clock for one CLI invocation.
 type App struct {
+	Stdin  io.Reader // used only by mcp-shim, which relays it to the wrapped server
 	Stdout io.Writer
 	Stderr io.Writer
 	Clock  ports.Clock
 }
 
-// New constructs an App with the wall clock.
+// New constructs an App with the wall clock and the process stdin.
 func New(stdout, stderr io.Writer) *App {
-	return &App{Stdout: stdout, Stderr: stderr, Clock: ports.ClockFunc(time.Now)}
+	return &App{Stdin: os.Stdin, Stdout: stdout, Stderr: stderr, Clock: ports.ClockFunc(time.Now)}
 }
 
 // Execute dispatches a subcommand and returns a process exit code.
@@ -67,6 +68,8 @@ func (a *App) Execute(ctx context.Context, args []string) int {
 		return a.runSign(ctx, rest)
 	case "key":
 		return a.runKey(ctx, rest)
+	case "mcp-shim":
+		return a.runMCPShim(ctx, rest)
 	case "version", "-v", "--version":
 		fmt.Fprintln(a.Stdout, buildinfo.UserAgent())
 		return ExitOK
@@ -143,6 +146,12 @@ func (a *App) verifyService(jsonOut bool, rulesDir string, verifier ports.Lockfi
 		Reporter: reporter(jsonOut),
 		Verifier: verifier,
 	})
+}
+
+// auditDir is the default audit-log location.
+func (a *App) auditDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".agentguard", "audit")
 }
 
 // keyPath is the default local signing-key location.
