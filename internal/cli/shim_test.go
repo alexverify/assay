@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/alexverify/agentguard/internal/cli"
 	"github.com/alexverify/agentguard/internal/domain/audit"
+	"github.com/alexverify/agentguard/internal/sandbox"
 )
 
 // fakeMCPServer writes a script that answers the first request line with a
@@ -162,6 +164,67 @@ printf '{"jsonrpc":"2.0","id":1,"result":{"proxy":"%s %s"}}\n' "$HTTP_PROXY" "$H
 	}
 }
 
+// TestMcpShimSandboxConfinesWrites runs only where a real sandbox backend is
+// present. The model is permissive reads but locked-down writes, so the test
+// proves the server can write inside its workspace but not outside it.
+func TestMcpShimSandboxConfinesWrites(t *testing.T) {
+	if sandbox.Select(sandbox.Profile{}).Name() == "none" {
+		t.Skip("no sandbox backend on this host")
+	}
+	work := t.TempDir()
+	// The outside target must be normally writable yet outside the workspace
+	// and the scratch (temp) dirs the sandbox allows — a unique file under
+	// $HOME fits. t.TempDir() would not: it lives under TMPDIR, which the
+	// sandbox permits for scratch writes.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir")
+	}
+	outside := filepath.Join(home, fmt.Sprintf(".agentguard_escape_%d.txt", os.Getpid()))
+	t.Cleanup(func() { os.Remove(outside) })
+	server := filepath.Join(work, "server.sh")
+	script := "#!/bin/sh\nread line\n" +
+		"if echo x > " + filepath.Join(work, "inside.txt") + " 2>/dev/null; then i=ok; else i=denied; fi\n" +
+		"if echo x > " + outside + " 2>/dev/null; then o=leaked; else o=denied; fi\n" +
+		`printf '{"jsonrpc":"2.0","id":1,"result":{"in":"%s","out":"%s"}}\n' "$i" "$o"` + "\n"
+	if err := os.WriteFile(server, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	app, out, errBuf := newApp()
+	app.Stdin = strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{}}}` + "\n")
+	code := app.Execute(context.Background(), []string{
+		"mcp-shim", "--server", "demo", "--audit-dir", t.TempDir(),
+		"--workspace", work, "--no-egress-proxy", "--", "/bin/sh", server,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errBuf.String())
+	}
+	if !strings.Contains(out.String(), `"in":"ok"`) {
+		t.Errorf("workspace write was wrongly denied: %q", out.String())
+	}
+	if !strings.Contains(out.String(), `"out":"denied"`) {
+		t.Errorf("sandbox failed to deny out-of-workspace write: %q", out.String())
+	}
+}
+
+func TestMcpShimNoSandboxFlag(t *testing.T) {
+	// With --no-sandbox the server runs unconfined and can read anywhere.
+	server := fakeMCPServer(t)
+	app, out, errBuf := newApp()
+	app.Stdin = strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ping","arguments":{}}}` + "\n")
+	code := app.Execute(context.Background(), []string{
+		"mcp-shim", "--server", "demo", "--audit-dir", t.TempDir(),
+		"--no-sandbox", "--no-egress-proxy", "--", "/bin/sh", server,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errBuf.String())
+	}
+	if !strings.Contains(out.String(), `"ok":true`) {
+		t.Fatalf("server did not run: %q", out.String())
+	}
+}
+
 func TestMcpShimPropagatesExitCode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "failing.sh")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 7\n"), 0o755); err != nil {
@@ -169,8 +232,11 @@ func TestMcpShimPropagatesExitCode(t *testing.T) {
 	}
 	app, _, _ := newApp()
 	app.Stdin = strings.NewReader("")
+	// --no-sandbox: this asserts exit-code propagation, not confinement. Under
+	// a sandbox the script (in a temp dir outside the workspace) would be
+	// unreadable and the wrapper's own error code would mask the child's.
 	code := app.Execute(context.Background(), []string{
-		"mcp-shim", "--server", "demo", "--audit-dir", t.TempDir(), "--", "/bin/sh", path,
+		"mcp-shim", "--server", "demo", "--audit-dir", t.TempDir(), "--no-sandbox", "--", "/bin/sh", path,
 	})
 	if code != 7 {
 		t.Fatalf("exit = %d, want the child's 7", code)

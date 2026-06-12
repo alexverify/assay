@@ -7,10 +7,10 @@ import (
 
 func sampleProfile() Profile {
 	return Profile{
-		Workspace:      "/Users/dev/project",
-		ProxyAddr:      "127.0.0.1:54321",
-		DenyPaths:      []string{"/Users/dev/.ssh", "/Users/dev/.aws"},
-		AllowReadPaths: []string{"/usr/lib", "/opt/homebrew"},
+		Workspace:  "/Users/dev/project",
+		ProxyAddr:  "127.0.0.1:54321",
+		DenyPaths:  []string{"/Users/dev/.ssh", "/Users/dev/.aws"},
+		WritePaths: []string{"/private/var/folders/tmp"},
 	}
 }
 
@@ -20,27 +20,26 @@ func TestSeatbeltProfileShape(t *testing.T) {
 	mustContain(t, sb, "seatbelt", []string{
 		"(version 1)",
 		"(deny default)",
+		"(allow file-read*)", // reads permissive
 		`(allow file-write* (subpath "/Users/dev/project"))`,
-		`(allow file-read* (subpath "/Users/dev/project"))`,
-		`(allow file-read* (subpath "/usr/lib"))`,
-		`(allow file-read* (subpath "/opt/homebrew"))`,
+		`(allow file-write* (subpath "/dev"))`,
+		`(allow file-write* (subpath "/private/var/folders/tmp"))`,
 		"(deny network*)",
-		`(allow network* (remote tcp "127.0.0.1:54321"))`,
+		`(allow network* (remote tcp "localhost:54321"))`,
 		`(deny file-read* (subpath "/Users/dev/.ssh"))`,
-		`(deny file-read* (subpath "/Users/dev/.aws"))`,
+		`(deny file-write* (subpath "/Users/dev/.aws"))`,
 	})
 
 	// Process basics must be allowed or the server can't even start.
-	mustContain(t, sb, "seatbelt", []string{
-		"(allow process-exec",
-		"(allow process-fork)",
-		"(allow sysctl-read)",
-	})
+	mustContain(t, sb, "seatbelt", []string{"(allow process*)", "(allow mach*)"})
 
-	// Loopback to the proxy must be reachable; the deny must come before the
-	// targeted allow so the allow wins (Seatbelt = last match wins).
-	if strings.Index(sb, "(deny network*)") > strings.Index(sb, `(allow network* (remote tcp "127.0.0.1:54321"))`) {
-		t.Error("network deny must precede the proxy allow (last match wins in Seatbelt)")
+	// Ordering (Seatbelt is last-match-wins):
+	if strings.Index(sb, "(deny network*)") > strings.Index(sb, `(allow network* (remote tcp "localhost:54321"))`) {
+		t.Error("network deny must precede the proxy allow")
+	}
+	// The broad read allow must precede the secret denies, or they'd be undone.
+	if strings.Index(sb, "(allow file-read*)") > strings.Index(sb, `(deny file-read* (subpath "/Users/dev/.ssh"))`) {
+		t.Error("secret read-denies must come after the broad read allow")
 	}
 }
 

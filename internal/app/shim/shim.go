@@ -43,6 +43,7 @@ type Options struct {
 	Server  string        // the wrapped MCP server's name (from the tool config)
 	Session string        // caller-generated id tying this run's events together
 	Policy  policy.Policy // runtime tool rules; zero value allows everything
+	Sandbox string        // active sandbox backend name, recorded on session_start
 }
 
 // Run pumps clientIn→serverIn and serverOut→clientOut until the server side
@@ -57,7 +58,7 @@ func (s *Service) Run(ctx context.Context, opts Options, clientIn io.Reader, cli
 	)
 	s.emit(ctx, audit.Event{
 		At: s.deps.Clock.Now(), Session: opts.Session, Server: opts.Server,
-		Kind: audit.KindSessionStart,
+		Kind: audit.KindSessionStart, Detail: sandboxDetail(opts.Sandbox),
 	})
 
 	// Both pumps write to the client (the up pump relays, the down pump
@@ -185,4 +186,12 @@ func status(c *jsonrpc.Completed) string {
 		return audit.StatusOK
 	}
 	return audit.StatusError
+}
+
+// sandboxDetail renders the session_start detail describing confinement.
+func sandboxDetail(backend string) string {
+	if backend == "" {
+		backend = "none"
+	}
+	return "sandbox=" + backend
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/alexverify/agentguard/internal/adapters/auditlog"
@@ -16,6 +17,7 @@ import (
 	"github.com/alexverify/agentguard/internal/app/shim"
 	"github.com/alexverify/agentguard/internal/domain/audit"
 	"github.com/alexverify/agentguard/internal/proxy"
+	"github.com/alexverify/agentguard/internal/sandbox"
 )
 
 // runMCPShim is the hidden command `wrap` installs into MCP configs:
@@ -31,6 +33,8 @@ func (a *App) runMCPShim(ctx context.Context, args []string) int {
 	auditDir := fs.String("audit-dir", a.auditDir(), "audit log directory")
 	policyPath := fs.String("policy", "agentguard.policy.json", "policy file with mcp tool rules (cwd is the project root)")
 	noProxy := fs.Bool("no-egress-proxy", false, "do not route the server's HTTP(S) traffic through the auditing egress proxy")
+	noSandbox := fs.Bool("no-sandbox", false, "do not confine the server with the OS sandbox")
+	workspace := fs.String("workspace", "", "directory the sandboxed server may read/write (default: current dir)")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -52,12 +56,12 @@ func (a *App) runMCPShim(ctx context.Context, args []string) int {
 	sink := auditlog.New(*auditDir)
 	session := newSessionID()
 
-	child := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	child.Stderr = a.Stderr // the server's stderr stays visible to the tool
-
-	// Point the server's HTTP stack at the egress proxy (host rules, body
-	// redaction, per-connection audit). Cooperative until the sandbox slice:
-	// well-behaved HTTP libraries honor these variables.
+	// Start the egress proxy first: its address is the only network endpoint
+	// the sandbox profile will permit, so the proxy must exist before the
+	// profile is built. Cooperative env injection alone (no sandbox) is what
+	// the proxy relied on before this slice.
+	var childEnv []string
+	var proxyAddr string
 	if !*noProxy {
 		egress := proxy.New(
 			proxy.Deps{Audit: sink, Clock: a.Clock},
@@ -68,11 +72,41 @@ func (a *App) runMCPShim(ctx context.Context, args []string) int {
 			fmt.Fprintf(a.Stderr, "mcp-shim: egress proxy disabled: %v\n", perr)
 		} else {
 			defer egress.Close()
+			proxyAddr = addr
 			pu := "http://" + addr
-			child.Env = append(os.Environ(),
+			childEnv = append(os.Environ(),
 				"HTTP_PROXY="+pu, "HTTPS_PROXY="+pu, "http_proxy="+pu, "https_proxy="+pu)
 		}
 	}
+
+	// Confine the server: rewrite argv to run under the OS sandbox, allowing
+	// only the workspace and the proxy port. An unavailable backend is the
+	// identity transform, so this degrades to the prior (cooperative) behavior.
+	sandboxName := "none"
+	if !*noSandbox {
+		ws := *workspace
+		if ws == "" {
+			ws, _ = os.Getwd()
+		}
+		backend := sandbox.Select(sandbox.Profile{
+			Workspace:  resolvePath(ws),
+			ProxyAddr:  proxyAddr,
+			DenyPaths:  resolvePaths(sensitiveDenyPaths()),
+			WritePaths: resolvePaths([]string{os.TempDir()}),
+		})
+		sandboxName = backend.Name()
+		wrapped, werr := backend.Wrap(argv)
+		if werr != nil {
+			fmt.Fprintf(a.Stderr, "mcp-shim: %v\n", werr)
+			return ExitError
+		}
+		argv = wrapped
+	}
+
+	child := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	child.Stderr = a.Stderr // the server's stderr stays visible to the tool
+	child.Env = childEnv    // nil keeps the parent environment
+
 	serverIn, err := child.StdinPipe()
 	if err != nil {
 		fmt.Fprintf(a.Stderr, "mcp-shim: %v\n", err)
@@ -100,7 +134,7 @@ func (a *App) runMCPShim(ctx context.Context, args []string) int {
 	}()
 
 	relay := shim.New(shim.Deps{Audit: sink, Clock: a.Clock})
-	_ = relay.Run(ctx, shim.Options{Server: *server, Session: session, Policy: pol},
+	_ = relay.Run(ctx, shim.Options{Server: *server, Session: session, Policy: pol, Sandbox: sandboxName},
 		a.Stdin, a.Stdout, serverIn, serverOut)
 
 	exitCode, detail := waitChild(child)
@@ -129,4 +163,37 @@ func newSessionID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// resolvePath returns the symlink-resolved path so sandbox profiles match the
+// real path (on macOS /tmp and /var are symlinks into /private). Unresolvable
+// paths pass through unchanged.
+func resolvePath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
+}
+
+func resolvePaths(ps []string) []string {
+	out := make([]string, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, resolvePath(p))
+	}
+	return out
+}
+
+// sensitiveDenyPaths are credential/secret locations the sandbox blocks
+// outright, even though they sit outside the workspace and would already be
+// unreadable — defense in depth and an explicit, auditable list.
+func sensitiveDenyPaths() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, rel := range []string{".ssh", ".aws", ".config/solana", ".config/gcloud", ".gnupg", ".kube", ".docker/config.json", ".npmrc"} {
+		out = append(out, filepath.Join(home, rel))
+	}
+	return out
 }
