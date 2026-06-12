@@ -25,6 +25,15 @@ func CanonicalBytes(lf Lockfile) ([]byte, error) {
 	return json.Marshal(lf)
 }
 
+// ApprovalSigningBytes returns the canonical bytes an approval signature
+// commits to: the artifact's stable ID and its content hash, newline-joined.
+// Binding the content hash means any later content change (a rug pull)
+// invalidates the approval; binding the ID stops an approval being moved to a
+// different artifact.
+func ApprovalSigningBytes(e Entry) []byte {
+	return []byte(e.ID + "\n" + e.ContentHash)
+}
+
 // Version is the current agentlock.json schema version.
 const Version = 1
 
