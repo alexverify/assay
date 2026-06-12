@@ -20,6 +20,9 @@ type Policy struct {
 	RequireApproval bool `json:"requireApproval,omitempty"`
 	// RequireSignature fails when the lockfile carries no valid signature.
 	RequireSignature bool `json:"requireSignature,omitempty"`
+	// MCP constrains tool calls at runtime, enforced by the mcp-shim
+	// (see DecideTool in mcp.go). Not used by verify.
+	MCP MCPPolicy `json:"mcp,omitempty"`
 }
 
 // Default is the policy used when no policy file is present.
