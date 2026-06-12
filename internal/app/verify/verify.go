@@ -19,10 +19,11 @@ import (
 
 // Deps are the collaborators verify needs.
 type Deps struct {
-	Builder  *scan.Service // computes the current state
-	Lock     ports.LockStore
-	Reporter ports.Reporter
-	Verifier ports.LockfileVerifier // optional; required only for policy.RequireSignature
+	Builder          *scan.Service // computes the current state
+	Lock             ports.LockStore
+	Reporter         ports.Reporter
+	Verifier         ports.LockfileVerifier // optional; required only for policy.RequireSignature
+	ApprovalVerifier ports.ApprovalVerifier // optional; required only for policy.RequireSignedApproval
 }
 
 // Service orchestrates verification.
@@ -77,11 +78,36 @@ func (s *Service) Run(ctx context.Context, opts Options, out io.Writer) (Result,
 				pres.Violations = append(pres.Violations, *v)
 			}
 		}
+		if opts.Policy.RequireSignedApproval {
+			pres.Violations = append(pres.Violations, s.approvalViolations(locked)...)
+		}
 		if !pres.OK() {
 			ok = false
 		}
 	}
 	return Result{Diff: diff, Policy: pres, OK: ok}, nil
+}
+
+// approvalViolations checks that every approved artifact carries a valid
+// signature from a trusted key. Artifacts that are not approved are left to
+// the RequireApproval check (implied on by Normalize), so this reports only
+// approvals that exist but are unsigned, forged, or stale (content moved).
+func (s *Service) approvalViolations(locked lockfile.Lockfile) []policy.Violation {
+	var out []policy.Violation
+	if s.deps.ApprovalVerifier == nil {
+		return []policy.Violation{{Kind: "unsigned_approval", Detail: "no signing key available to verify approvals"}}
+	}
+	for _, e := range locked.Artifacts {
+		if e.Approval == nil || e.Approval.Status != "approved" {
+			continue
+		}
+		if err := s.deps.ApprovalVerifier.VerifyApproval(e); err != nil {
+			out = append(out, policy.Violation{
+				Kind: "unsigned_approval", ID: e.ID, Name: e.Name, Detail: err.Error(),
+			})
+		}
+	}
+	return out
 }
 
 // signatureViolation returns a policy violation if the locked lockfile is not

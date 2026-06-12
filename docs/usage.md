@@ -35,7 +35,7 @@ One-time setup, committed to the repo:
 
 ```sh
 agentguard scan
-agentguard approve --all                  # review first, then bless the inventory
+agentguard approve --all --sign           # review first, then bless the inventory (signed)
 echo '{ "requireApproval": true, "requireSignature": true }' > agentguard.policy.json
 agentguard key show                       # each teammate shares this output…
 agentguard key trust <key> --name alice --file agentguard.trustedkeys   # …and registers the others
@@ -52,6 +52,10 @@ The build fails on:
   the locked snapshot — pre-existing accepted findings don't re-fire;
 - **unapproved artifacts**, when `requireApproval` is set — anything added
   without an `agentguard approve`;
+- **unsigned or forged approvals**, when `requireSignedApproval` is set — each
+  approval must carry a signature (`agentguard approve --sign`) from a trusted
+  key over the artifact's content, so an approval can't be hand-added to the
+  lockfile or kept across a content change;
 - **a missing or untrusted signature**, when `requireSignature` is set — the
   lockfile must be signed by a key in `agentguard.trustedkeys`.
 

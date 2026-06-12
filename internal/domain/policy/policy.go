@@ -18,6 +18,9 @@ type Policy struct {
 	IgnoreRules []string `json:"ignoreRules,omitempty"`
 	// RequireApproval fails any artifact not marked approved in the lockfile.
 	RequireApproval bool `json:"requireApproval,omitempty"`
+	// RequireSignedApproval additionally fails any approval lacking a valid
+	// signature from a trusted key. Implies RequireApproval.
+	RequireSignedApproval bool `json:"requireSignedApproval,omitempty"`
 	// RequireSignature fails when the lockfile carries no valid signature.
 	RequireSignature bool `json:"requireSignature,omitempty"`
 	// MCP constrains tool calls at runtime, enforced by the mcp-shim
@@ -35,6 +38,9 @@ func Default() Policy {
 func (p Policy) Normalize() Policy {
 	if p.FailOnSeverity == "" {
 		p.FailOnSeverity = finding.SeverityHigh
+	}
+	if p.RequireSignedApproval {
+		p.RequireApproval = true // a signed approval is still an approval
 	}
 	return p
 }

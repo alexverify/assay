@@ -108,6 +108,12 @@ type LockfileVerifier interface {
 	VerifyLockfile(lf lockfile.Lockfile) error
 }
 
+// ApprovalVerifier checks that an artifact's approval carries a valid
+// signature from a trusted key over its current content. nil means valid.
+type ApprovalVerifier interface {
+	VerifyApproval(e lockfile.Entry) error
+}
+
 // AuditSink records shim audit events (see internal/domain/audit). Emitting
 // must be cheap and safe to call from the relay hot path.
 type AuditSink interface {

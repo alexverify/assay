@@ -149,12 +149,17 @@ func (a *App) scanService(jsonOut bool, rulesDir string) *scan.Service {
 // as the current-state builder (only Build is called, never Run). The verifier
 // may be nil when the caller never applies a signature policy (diff).
 func (a *App) verifyService(jsonOut bool, rulesDir string, verifier ports.LockfileVerifier) *verify.Service {
-	return verify.New(verify.Deps{
+	d := verify.Deps{
 		Builder:  a.scanService(jsonOut, rulesDir),
 		Lock:     lockstore.New(),
 		Reporter: reporter(jsonOut),
 		Verifier: verifier,
-	})
+	}
+	// The keyring satisfies both verifier ports; reuse it for approvals.
+	if av, ok := verifier.(ports.ApprovalVerifier); ok {
+		d.ApprovalVerifier = av
+	}
+	return verify.New(d)
 }
 
 // auditDir is the default audit-log location.

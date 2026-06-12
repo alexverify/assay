@@ -99,6 +99,8 @@ func (a *App) runVerify(ctx context.Context, args []string) int {
 		switch v.Kind {
 		case "unapproved":
 			fmt.Fprintf(a.Stdout, "policy: unapproved artifact %s (%s)\n", v.Name, v.ID)
+		case "unsigned_approval":
+			fmt.Fprintf(a.Stdout, "policy: approval not validly signed — %s %s\n", v.Name, v.Detail)
 		case "signature":
 			fmt.Fprintf(a.Stdout, "policy: signature — %s\n", v.Detail)
 		default:
@@ -157,6 +159,8 @@ func (a *App) runApprove(ctx context.Context, args []string) int {
 	fs := a.flagSet("approve")
 	lock := fs.String("lockfile", "agentlock.json", "lockfile path")
 	all := fs.Bool("all", false, "approve every artifact in the lockfile (bulk onboarding)")
+	signApproval := fs.Bool("sign", false, "cryptographically sign each approval with your local key")
+	key := fs.String("key", a.keyPath(), "ed25519 private key path for --sign (created if absent)")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -181,12 +185,29 @@ func (a *App) runApprove(ctx context.Context, args []string) int {
 		return ExitError
 	}
 
+	var signer *sign.Signer
+	if *signApproval {
+		signer, err = sign.LoadOrCreate(*key)
+		if err != nil {
+			fmt.Fprintf(a.Stderr, "approve: %v\n", err)
+			return ExitError
+		}
+	}
+
 	now := a.Clock.Now().UTC()
 	who := currentUser()
 	matched := 0
 	for i := range lf.Artifacts {
 		if *all || matchesAnyPrefix(lf.Artifacts[i].ID, ids) {
 			lf.Artifacts[i].Approval = &lockfile.Approval{Status: "approved", By: who, At: now}
+			if signer != nil {
+				sig, serr := signer.SignApproval(lf.Artifacts[i])
+				if serr != nil {
+					fmt.Fprintf(a.Stderr, "approve: %v\n", serr)
+					return ExitError
+				}
+				lf.Artifacts[i].Approval.Sig = sig
+			}
 			matched++
 		}
 	}
