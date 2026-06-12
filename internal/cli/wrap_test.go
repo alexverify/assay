@@ -118,6 +118,59 @@ func TestWrapCausesNoDrift(t *testing.T) {
 	}
 }
 
+func TestWrapGlobalScope(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := `{
+  "mcpServers": {"global-tool": {"command": "node", "args": ["g.js"]}},
+  "projects": {"/x": {"foo": 1}}
+}`
+	globalPath := filepath.Join(home, ".claude.json")
+	if err := os.WriteFile(globalPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	app, out, errBuf := newApp()
+	if code := app.Execute(ctx, []string{"wrap", "--global"}); code != cli.ExitOK {
+		t.Fatalf("wrap --global exit = %d, stderr=%s", code, errBuf.String())
+	}
+	if !strings.Contains(out.String(), "wrapped 1") {
+		t.Errorf("wrap --global output = %q", out.String())
+	}
+	raw := readConfigAt(t, globalPath)
+	entry := raw["mcpServers"].(map[string]any)["global-tool"].(map[string]any)
+	if args, _ := entry["args"].([]any); len(args) == 0 || args[0] != "mcp-shim" {
+		t.Fatalf("global config not rewritten: %v", entry)
+	}
+	// Unrelated top-level keys must survive.
+	if _, ok := raw["projects"]; !ok {
+		t.Error("wrap --global must preserve other top-level keys")
+	}
+
+	app, _, _ = newApp()
+	if code := app.Execute(ctx, []string{"unwrap", "--global"}); code != cli.ExitOK {
+		t.Fatal("unwrap --global failed")
+	}
+	entry = readConfigAt(t, globalPath)["mcpServers"].(map[string]any)["global-tool"].(map[string]any)
+	if entry["command"] != "node" {
+		t.Errorf("unwrap --global did not restore: %v", entry)
+	}
+}
+
+func readConfigAt(t *testing.T, path string) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
 func TestWrapUnsupportedTool(t *testing.T) {
 	app, _, errBuf := newApp()
 	if code := app.Execute(context.Background(), []string{"wrap", "--tool", "cursor", "--path", t.TempDir()}); code != cli.ExitUsage {

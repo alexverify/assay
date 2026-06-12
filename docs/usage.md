@@ -94,8 +94,9 @@ it *actually does*:
 
 ```sh
 agentguard wrap              # route this project's stdio MCP servers through the shim
+agentguard wrap --global     # same for your user-level ~/.claude.json servers
 agentguard wrap --status     # what's wrapped, and what really runs underneath
-agentguard unwrap            # restore the original config
+agentguard unwrap            # restore the original config (--global for the user-level one)
 ```
 
 `wrap` rewrites `.mcp.json` so each stdio server launches via

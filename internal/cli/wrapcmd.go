@@ -17,11 +17,12 @@ func (a *App) runWrap(ctx context.Context, args []string) int {
 	fs := a.flagSet("wrap")
 	tool := fs.String("tool", "claude-code", "tool whose MCP config to wrap (claude-code only for now)")
 	path := fs.String("path", ".", "project root")
+	global := fs.Bool("global", false, "wrap the user-level (~/.claude.json) config instead of a project")
 	status := fs.Bool("status", false, "show wrap state instead of changing anything")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
-	cfg, code := a.loadMCPConfig(*tool, *path, "wrap")
+	cfg, code := a.loadMCPConfig(*tool, *path, *global, "wrap")
 	if cfg == nil {
 		return code
 	}
@@ -49,10 +50,11 @@ func (a *App) runUnwrap(ctx context.Context, args []string) int {
 	fs := a.flagSet("unwrap")
 	tool := fs.String("tool", "claude-code", "tool whose MCP config to restore")
 	path := fs.String("path", ".", "project root")
+	global := fs.Bool("global", false, "unwrap the user-level (~/.claude.json) config instead of a project")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
-	cfg, code := a.loadMCPConfig(*tool, *path, "unwrap")
+	cfg, code := a.loadMCPConfig(*tool, *path, *global, "unwrap")
 	if cfg == nil {
 		return code
 	}
@@ -67,14 +69,23 @@ func (a *App) runUnwrap(ctx context.Context, args []string) int {
 	return ExitOK
 }
 
-// loadMCPConfig validates the tool and loads its project MCP config. On
-// failure it reports and returns a nil config with the exit code to use.
-func (a *App) loadMCPConfig(tool, path, cmd string) (*mcpconfig.Config, int) {
+// loadMCPConfig validates the tool and loads its MCP config — the user-level
+// ~/.claude.json when global, else the project's .mcp.json. On failure it
+// reports and returns a nil config with the exit code to use.
+func (a *App) loadMCPConfig(tool, path string, global bool, cmd string) (*mcpconfig.Config, int) {
 	if tool != "claude-code" {
 		fmt.Fprintf(a.Stderr, "%s: tool %q not supported yet (only claude-code)\n", cmd, tool)
 		return nil, ExitUsage
 	}
 	cfgPath := filepath.Join(path, ".mcp.json")
+	if global {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(a.Stderr, "%s: %v\n", cmd, err)
+			return nil, ExitError
+		}
+		cfgPath = filepath.Join(home, ".claude.json")
+	}
 	cfg, err := mcpconfig.Load(cfgPath)
 	if err != nil {
 		fmt.Fprintf(a.Stderr, "%s: %v\n", cmd, err)
