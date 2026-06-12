@@ -12,12 +12,18 @@ import (
 	"github.com/alexverify/agentguard/internal/app/ports"
 	"github.com/alexverify/agentguard/internal/app/shim"
 	"github.com/alexverify/agentguard/internal/domain/audit"
+	"github.com/alexverify/agentguard/internal/domain/policy"
 )
 
 // runRelay drives one relay session: clientLines go in as the agent's stdin,
 // server is a scripted responder keyed by exact request line. It returns what
 // the fake server received and what the agent got back.
 func runRelay(t *testing.T, clientLines []string, responses map[string][]string, sink ports.AuditSink) (serverGot, clientGot string) {
+	t.Helper()
+	return runRelayPolicy(t, clientLines, responses, sink, policy.Policy{})
+}
+
+func runRelayPolicy(t *testing.T, clientLines []string, responses map[string][]string, sink ports.AuditSink, pol policy.Policy) (serverGot, clientGot string) {
 	t.Helper()
 
 	clientIn := strings.NewReader(strings.Join(clientLines, ""))
@@ -59,7 +65,7 @@ func runRelay(t *testing.T, clientLines []string, responses map[string][]string,
 	}()
 
 	svc := shim.New(shim.Deps{Audit: sink, Clock: ports.ClockFunc(time.Now)})
-	err := svc.Run(context.Background(), shim.Options{Server: "github", Session: "s1"},
+	err := svc.Run(context.Background(), shim.Options{Server: "github", Session: "s1", Policy: pol},
 		clientIn, &clientOut, serverInW, serverOutR)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -147,6 +153,65 @@ func TestRelayAuditsUnansweredCallsWhenServerDies(t *testing.T) {
 		}
 	}
 	t.Fatalf("expected an unanswered tool_call event, got %+v", sink.Events())
+}
+
+func TestRelayDeniesByPolicy(t *testing.T) {
+	pol := policy.Policy{MCP: policy.MCPPolicy{Servers: map[string]policy.ToolRule{
+		"github": {DenyTools: []string{"create_*"}},
+	}}}
+	sink := &apptest.AuditSink{}
+	serverGot, clientGot := runRelayPolicy(t, []string{callLine}, map[string][]string{}, sink, pol)
+
+	if serverGot != "" {
+		t.Errorf("a denied call must never reach the server, got %q", serverGot)
+	}
+	if !strings.Contains(clientGot, `"id":1`) || !strings.Contains(clientGot, `"error"`) ||
+		!strings.Contains(clientGot, "agentguard policy") {
+		t.Errorf("client must get a JSON-RPC error for its id: %q", clientGot)
+	}
+
+	var denied *audit.Event
+	for _, e := range sink.Events() {
+		if e.Kind == audit.KindToolCall {
+			e := e
+			denied = &e
+		}
+	}
+	if denied == nil || denied.Status != audit.StatusDenied {
+		t.Fatalf("denial must be audited, got %+v", sink.Events())
+	}
+	if denied.Tool != "create_issue" || denied.ArgsDigest == "" || !strings.Contains(denied.Detail, "create_*") {
+		t.Errorf("denied event = %+v", denied)
+	}
+}
+
+func TestRelayAllowsAndDeniesSideBySide(t *testing.T) {
+	pol := policy.Policy{MCP: policy.MCPPolicy{Servers: map[string]policy.ToolRule{
+		"*": {DenyTools: []string{"delete_*"}},
+	}}}
+	deniedLine := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"delete_repo","arguments":{}}}` + "\n"
+
+	sink := &apptest.AuditSink{}
+	serverGot, clientGot := runRelayPolicy(t,
+		[]string{callLine, deniedLine},
+		map[string][]string{callLine: {respLine}}, sink, pol)
+
+	if serverGot != callLine {
+		t.Errorf("only the allowed call may reach the server, got %q", serverGot)
+	}
+	if !strings.Contains(clientGot, `"result"`) || !strings.Contains(clientGot, `"error"`) {
+		t.Errorf("client must see the real response AND the denial: %q", clientGot)
+	}
+
+	statuses := map[string]string{}
+	for _, e := range sink.Events() {
+		if e.Kind == audit.KindToolCall {
+			statuses[e.Tool] = e.Status
+		}
+	}
+	if statuses["create_issue"] != audit.StatusOK || statuses["delete_repo"] != audit.StatusDenied {
+		t.Errorf("statuses = %v", statuses)
+	}
 }
 
 func TestRelayHandlesOversizedLines(t *testing.T) {

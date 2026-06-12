@@ -84,6 +84,10 @@ func Parse(line []byte) Message {
 	}
 }
 
+// ArgsDigest returns the content digest of a tools/call's raw arguments —
+// the only form in which arguments ever reach the audit trail.
+func (m Message) ArgsDigest() string { return digest.Inline(m.ArgsJSON) }
+
 // Pending is an in-flight tools/call. Arguments are kept only as a digest —
 // the audit trail must never hold raw values (they routinely contain secrets).
 type Pending struct {
@@ -120,7 +124,7 @@ func (t *Tracker) Observe(m Message, at time.Time) *Completed {
 	case KindRequest:
 		if m.Method == MethodToolCall {
 			t.pending[m.ID] = Pending{
-				ID: m.ID, Tool: m.ToolName, ArgsDigest: digest.Inline(m.ArgsJSON), At: at,
+				ID: m.ID, Tool: m.ToolName, ArgsDigest: m.ArgsDigest(), At: at,
 			}
 		}
 	case KindResponse:

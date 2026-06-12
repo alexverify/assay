@@ -26,6 +26,7 @@ const (
 	StatusOK         = "ok"
 	StatusError      = "error"
 	StatusUnanswered = "unanswered" // server died before responding
+	StatusDenied     = "denied"     // blocked by policy, never reached the server
 )
 
 // Event is one audit line.
