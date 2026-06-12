@@ -1,0 +1,21 @@
+# Keep line endings stable across OSes. Go tooling (gofmt) requires LF, and
+# content hashing means a CRLF/LF flip would otherwise look like drift — so
+# normalize text to LF on checkout everywhere, including Windows.
+* text=auto eol=lf
+
+# Source and fixtures are always LF.
+*.go    text eol=lf
+*.mod   text eol=lf
+*.sum   text eol=lf
+*.json  text eol=lf
+*.jsonc text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+*.sh    text eol=lf
+*.sb    text eol=lf
+
+# Binaries must never be touched.
+*.png   binary
+*.gz    binary
+*.zip   binary
