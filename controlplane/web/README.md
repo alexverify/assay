@@ -1,21 +1,19 @@
 # agentguard dashboard (web)
 
-The Next.js + TypeScript frontend for `agentguard dashboard`. It is
-**static-exported** (`output: 'export'`) and the built site is embedded into
-the Go binary via `go:embed`, so users get a single binary with no Node
-runtime. The backend is the Go `/api/*` endpoints (inventory, drift, audit) —
-there is no SSR or Next API route.
+The Next.js + TypeScript + Tailwind frontend for `agentguard dashboard`. It is
+**static-exported** (`output: 'export'`) and the built site is embedded into the
+Go binary via `go:embed`, so users get a single binary with no Node runtime.
+
+The dashboard currently renders **mock scan data** (`lib/scan-data.ts`) so it is
+fully demoable offline; the Go `/api/*` endpoints (inventory, drift, audit) are
+served by the same process and the views will be wired to them next.
 
 ## Develop
 
 ```sh
 npm ci
-npm run dev        # http://localhost:3000, proxy /api to a running `agentguard dashboard`
+npm run dev        # http://localhost:3000
 ```
-
-For live data during `next dev`, run `agentguard dashboard` in another terminal
-and point fetches at it (or use a dev proxy); the production path is the
-embedded export talking to the same Go process.
 
 ## Build + embed
 
@@ -28,3 +26,11 @@ make build           # rebuild the Go binary, embedding the export
 
 The built export under `internal/dashboard/assets` is committed (it is the
 shipped artifact); `node_modules`, `.next`, and `out` are not.
+
+## Layout
+
+- `app/page.tsx` — the dashboard (root route, what `agentguard dashboard` serves)
+- `components/dashboard/` — dashboard UI (header, stat cards, badges, tabs)
+- `components/ui/` — shadcn/base-ui primitives
+- `lib/scan-data.ts` — mock inventory/findings/drift data
+- `lib/scan-utils.ts` — severity/drift aggregation helpers
