@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   Search,
   Boxes,
@@ -9,6 +9,9 @@ import {
   FileCode2,
   ChevronRight,
   Terminal,
+  Inbox,
+  Activity as ActivityIcon,
+  AlertTriangle,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
@@ -31,17 +34,19 @@ import { StatCard } from "@/components/dashboard/stat-card"
 import { SeverityBadge, DriftBadge, VerdictBadge } from "@/components/dashboard/badges"
 import { ArtifactDrawer } from "@/components/dashboard/artifact-drawer"
 
-type TabId = "inventory" | "findings" | "drift"
+type TabId = "changes" | "inventory" | "findings" | "drift" | "activity"
 
 const TABS: { id: TabId; label: string; icon: typeof Boxes }[] = [
+  { id: "changes", label: "Changes", icon: Inbox },
   { id: "inventory", label: "Inventory & Lockfile", icon: Boxes },
   { id: "findings", label: "Security Findings", icon: ShieldAlert },
   { id: "drift", label: "Rug-pull / Drift", icon: GitCompareArrows },
+  { id: "activity", label: "Activity", icon: ActivityIcon },
 ]
 
 export function Dashboard() {
   const { artifacts, loading, live } = useScan()
-  const [tab, setTab] = useState<TabId>("inventory")
+  const [tab, setTab] = useState<TabId>("changes")
   const [query, setQuery] = useState("")
   const [agentFilter, setAgentFilter] = useState<Agent | "all">("all")
   const [kindFilter, setKindFilter] = useState<ArtifactKind | "all">("all")
@@ -80,6 +85,20 @@ export function Dashboard() {
     [artifacts],
   )
 
+  // "What changed since I last looked": anything not in its audited steady
+  // state — newly discovered, updated, or drifted.
+  const changedArtifacts = useMemo(
+    () => artifacts.filter((a) => a.drift === "drifted" || a.drift === "new" || a.drift === "updated"),
+    [artifacts],
+  )
+
+  // Known-malicious matches (B2) carry an ADVISORY-* finding; surface them as a
+  // top-level banner regardless of which tab is open.
+  const advisories = useMemo(
+    () => artifacts.filter((a) => a.findings.some((f) => (f.ruleId ?? "").startsWith("ADVISORY"))),
+    [artifacts],
+  )
+
   const driftedCount = drift.drifted + drift.unsigned
 
   return (
@@ -103,6 +122,21 @@ export function Dashboard() {
           <span className="text-foreground">npx agentguard scan</span>
         </div>
       </div>
+
+      {/* Known-malicious banner (B2) */}
+      {advisories.length > 0 && (
+        <div className="mt-6 flex items-start gap-3 rounded-lg border border-sev-critical/40 bg-sev-critical/10 px-4 py-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-sev-critical" />
+          <div className="text-sm">
+            <p className="font-medium text-sev-critical">
+              {advisories.length} artifact{advisories.length > 1 ? "s" : ""} match a known-malicious advisory
+            </p>
+            <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+              {advisories.map((a) => a.name).join(", ")} — quarantine and remove immediately.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Summary stats */}
       <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -148,6 +182,8 @@ export function Dashboard() {
 
       {/* Tab content */}
       <div className="mt-6">
+        {tab === "changes" && <ChangesPanel artifacts={changedArtifacts} onSelect={setSelected} />}
+        {tab === "activity" && <ActivityPanel />}
         {tab === "inventory" && (
           <InventoryPanel
             artifacts={filteredArtifacts}
@@ -438,6 +474,153 @@ function DriftPanel({ drifted: rows, updated }: { drifted: Artifact[]; updated: 
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/* ----------------------------- Changes ----------------------------- */
+
+function ChangesPanel({
+  artifacts: rows,
+  onSelect,
+}: {
+  artifacts: Artifact[]
+  onSelect: (a: Artifact) => void
+}) {
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-card p-10 text-center">
+        <p className="font-mono text-sm text-ok">Nothing changed since you last looked</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          No new, updated, or drifted artifacts. Run <span className="font-mono">agentguard digest</span> for
+          the same summary in your terminal or CI.
+        </p>
+      </div>
+    )
+  }
+  // Loudest first: drifted, then new, then updated.
+  const order: Record<string, number> = { drifted: 0, new: 1, updated: 2, unsigned: 3, verified: 4 }
+  const sorted = [...rows].sort((a, b) => (order[a.drift] ?? 9) - (order[b.drift] ?? 9))
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-sm text-muted-foreground">
+        {rows.length} artifact{rows.length > 1 ? "s" : ""} to review since the lockfile.
+      </p>
+      {sorted.map((a) => (
+        <button
+          key={a.id}
+          type="button"
+          onClick={() => onSelect(a)}
+          className="flex w-full flex-col gap-1.5 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/30"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <FileCode2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="font-mono text-sm font-medium text-foreground">{a.name}</span>
+              <span className="font-mono text-xs text-muted-foreground">
+                {a.agent} · {a.kind}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {a.verdict ? <VerdictBadge verdict={a.verdict} score={a.trust} /> : null}
+              <DriftBadge status={a.drift} />
+            </div>
+          </div>
+          {a.driftDetail ? (
+            <p className={cn("text-xs", a.drift === "drifted" ? "text-sev-critical" : "text-muted-foreground")}>
+              {a.driftDetail}
+            </p>
+          ) : null}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/* ----------------------------- Activity ----------------------------- */
+
+interface ActivityEvent {
+  ts: string
+  server: string
+  kind: string
+  tool?: string
+  host?: string
+  status?: string
+  bytesUp?: number
+  bytesDown?: number
+  redactions?: number
+}
+
+interface ActivitySummary {
+  total: number
+  toolCalls: number
+  denied: number
+  egress: number
+  redactions: number
+}
+
+function ActivityPanel() {
+  const [events, setEvents] = useState<ActivityEvent[] | null>(null)
+  const [summary, setSummary] = useState<ActivitySummary | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/audit")
+      .then((r) => (r.ok ? r.json() : { events: [], summary: null }))
+      .then((d: { events?: ActivityEvent[]; summary?: ActivitySummary }) => {
+        if (cancelled) return
+        setEvents(d.events ?? [])
+        setSummary(d.summary ?? null)
+      })
+      .catch(() => !cancelled && setEvents([]))
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (events === null) {
+    return <p className="text-sm text-muted-foreground">Loading activity…</p>
+  }
+  if (events.length === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-card p-10 text-center">
+        <p className="font-mono text-sm text-muted-foreground">No runtime activity recorded</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Wrap a tool's MCP servers with <span className="font-mono">agentguard wrap</span> to audit every tool
+          call and outbound connection here.
+        </p>
+      </div>
+    )
+  }
+  return (
+    <div className="flex flex-col gap-4">
+      {summary ? (
+        <p className="font-mono text-xs text-muted-foreground">
+          {summary.total} events · {summary.toolCalls} tool calls · {summary.denied} denied · {summary.egress}{" "}
+          egress · {summary.redactions} redactions
+        </p>
+      ) : null}
+      <div className="overflow-hidden rounded-lg border border-border">
+        {events
+          .slice(-200)
+          .reverse()
+          .map((e, i) => (
+            <div
+              key={`${e.ts}-${i}`}
+              className="grid grid-cols-[auto_1fr_auto] items-baseline gap-3 border-b border-border/60 px-4 py-1.5 font-mono text-[11px] last:border-0"
+            >
+              <span className="text-muted-foreground">{e.ts?.replace("T", " ").replace("Z", "")}</span>
+              <span className="truncate text-foreground">
+                <span className="text-muted-foreground">{e.server}</span> {e.kind}{" "}
+                {e.tool || e.host || ""}
+                {e.kind === "egress" && (e.bytesUp || e.bytesDown)
+                  ? ` (↑${e.bytesUp ?? 0} ↓${e.bytesDown ?? 0}${e.redactions ? `, ${e.redactions} redacted` : ""})`
+                  : ""}
+              </span>
+              <span className={cn(e.status === "denied" ? "text-sev-critical" : "text-ok")}>{e.status}</span>
+            </div>
+          ))}
+      </div>
     </div>
   )
 }
