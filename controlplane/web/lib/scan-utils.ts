@@ -4,6 +4,7 @@ import {
   type Finding,
   type Severity,
   type DriftStatus,
+  type Verdict,
 } from "@/lib/scan-data"
 
 export interface FlatFinding extends Finding {
@@ -39,6 +40,7 @@ export function severityCounts(artifacts: Artifact[]): Record<Severity, number> 
 export function driftCounts(artifacts: Artifact[]): Record<DriftStatus, number> {
   const counts: Record<DriftStatus, number> = {
     verified: 0,
+    updated: 0,
     drifted: 0,
     new: 0,
     unsigned: 0,
@@ -98,6 +100,12 @@ export const DRIFT_STYLES: Record<
     bg: "bg-ok/10",
     border: "border-ok/30",
   },
+  updated: {
+    label: "Updated",
+    text: "text-sev-medium",
+    bg: "bg-sev-medium/10",
+    border: "border-sev-medium/30",
+  },
   drifted: {
     label: "Drifted",
     text: "text-sev-critical",
@@ -116,4 +124,40 @@ export const DRIFT_STYLES: Record<
     bg: "bg-sev-high/10",
     border: "border-sev-high/30",
   },
+}
+
+export const VERDICT_STYLES: Record<
+  Verdict,
+  { label: string; text: string; bg: string; border: string; dot: string }
+> = {
+  trusted: {
+    label: "Trusted",
+    text: "text-ok",
+    bg: "bg-ok/10",
+    border: "border-ok/30",
+    dot: "bg-ok",
+  },
+  review: {
+    label: "Review",
+    text: "text-sev-high",
+    bg: "bg-sev-high/10",
+    border: "border-sev-high/30",
+    dot: "bg-sev-high",
+  },
+  quarantine: {
+    label: "Quarantine",
+    text: "text-sev-critical",
+    bg: "bg-sev-critical/10",
+    border: "border-sev-critical/30",
+    dot: "bg-sev-critical",
+  },
+}
+
+export function verdictCounts(artifacts: Artifact[]): Record<Verdict, number> {
+  const counts: Record<Verdict, number> = { trusted: 0, review: 0, quarantine: 0 }
+  for (const a of artifacts) {
+    const v = a.verdict ?? "review"
+    counts[v] += 1
+  }
+  return counts
 }

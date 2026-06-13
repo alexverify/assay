@@ -6,7 +6,14 @@
 export type Agent = "Claude Code" | "Cursor" | "Codex" | "OpenCode"
 export type ArtifactKind = "skill" | "mcp" | "plugin"
 export type Severity = "critical" | "high" | "medium" | "low"
-export type DriftStatus = "verified" | "drifted" | "new" | "unsigned"
+export type DriftStatus = "verified" | "updated" | "drifted" | "new" | "unsigned"
+
+export type Verdict = "trusted" | "review" | "quarantine"
+
+export interface TrustReason {
+  label: string
+  delta: number
+}
 
 export type FindingPattern =
   | "remote-code-exec" // curl | sh
@@ -24,12 +31,21 @@ export interface Finding {
   detail: string
   evidence: string // a code/line snippet
   location: string // file + line
+  ruleId?: string
+  owasp?: string
 }
 
 export interface Capabilities {
   exec: boolean
   network: string[]
   filesystem: string[]
+  // Diff against the locked snapshot (A2).
+  execNewlyAdded?: boolean
+  addedNetwork?: string[]
+  removedNetwork?: string[]
+  addedFilesystem?: string[]
+  removedFilesystem?: string[]
+  sensitiveAdded?: string[]
 }
 
 export interface FileEntry {
@@ -72,6 +88,13 @@ export interface Artifact {
   capabilities?: Capabilities
   files?: FileEntry[]
   approval?: Approval | null
+
+  // Trust verdict (A1) and drift interpretation (A3).
+  trust?: number
+  verdict?: Verdict
+  trustReasons?: TrustReason[]
+  driftClass?: string
+  driftDetail?: string
 }
 
 export const SEVERITY_ORDER: Record<Severity, number> = {
