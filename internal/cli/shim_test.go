@@ -147,13 +147,17 @@ func TestMcpShimRejectsBrokenPolicy(t *testing.T) {
 func TestMcpShimInjectsEgressProxy(t *testing.T) {
 	dir := t.TempDir()
 	server := filepath.Join(dir, "server.sh")
+	// AGENTGUARD_CONTROL is injected below as a control: it proves the child
+	// receives our custom environment at all, isolating proxy-var issues from
+	// shell env-passthrough issues.
 	script := `#!/bin/sh
 read line
-printf '{"jsonrpc":"2.0","id":1,"result":{"proxy":"%s %s"}}\n' "$HTTP_PROXY" "$HTTPS_PROXY"
+printf '{"jsonrpc":"2.0","id":1,"result":{"proxy":"%s","ctrl":"%s"}}\n' "$HTTP_PROXY" "$AGENTGUARD_CONTROL"
 `
 	if err := os.WriteFile(server, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("AGENTGUARD_CONTROL", "present")
 
 	app, out, errBuf := newApp()
 	app.Stdin = strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}` + "\n")
@@ -164,7 +168,7 @@ printf '{"jsonrpc":"2.0","id":1,"result":{"proxy":"%s %s"}}\n' "$HTTP_PROXY" "$H
 		t.Fatalf("exit = %d, stderr=%s", code, errBuf.String())
 	}
 	if !strings.Contains(out.String(), "http://127.0.0.1:") {
-		t.Fatalf("child must see HTTP(S)_PROXY set: %q", out.String())
+		t.Fatalf("child must see HTTP_PROXY set.\n  stdout=%q\n  stderr=%q\n  (ctrl=present means our env reached the child)", out.String(), errBuf.String())
 	}
 
 	// And --no-egress-proxy must leave the environment alone.
