@@ -222,6 +222,13 @@ no auth because there is no remotely reachable surface. The UI is a Next.js app
 (`controlplane/web`) static-exported and **embedded in the binary** — nothing
 to install, works offline. Rebuild it with `make dashboard-web && make build`.
 
+Click any artifact in the inventory to open its **security profile**:
+provenance (source, launch command, env *keys* only — values are never shown),
+integrity (on-disk vs locked hash, signature/approval state verified against
+your trusted keys), declared capabilities, security findings, the file
+manifest, and — for MCP servers wrapped with `agentguard wrap` — the live
+runtime audit timeline.
+
 ## Exit codes (stable contract)
 
 `0` clean · `1` drift or policy violation · `2` usage error · `3` internal
