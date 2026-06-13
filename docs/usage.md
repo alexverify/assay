@@ -205,6 +205,22 @@ Filters (`--server`, `--tool`, `--status`, `--kind`, `--since`) compose. The
 summary is the fast "what have my MCP servers been doing" view; `--list` is the
 forensic detail.
 
+## Dashboard
+
+`agentguard dashboard` serves a local, read-only web view of what agentguard
+sees on this machine — the live inventory, drift against the committed
+lockfile, findings, and the MCP shim's audit timeline:
+
+```sh
+agentguard dashboard                 # http://127.0.0.1:7113
+agentguard dashboard --addr 127.0.0.1:9000 --path . --audit-dir ~/.agentguard/audit
+```
+
+It binds loopback only and rejects any request whose `Host` header isn't a
+loopback name (defeating DNS-rebinding from a page in your browser); there is
+no auth because there is no remotely reachable surface. The UI ships embedded
+in the binary — nothing to install, works offline.
+
 ## Exit codes (stable contract)
 
 `0` clean · `1` drift or policy violation · `2` usage error · `3` internal
