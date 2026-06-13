@@ -202,3 +202,60 @@ func TestBuildScanApprovalDetail(t *testing.T) {
 		t.Errorf("approval detail: %+v", d.Approval)
 	}
 }
+
+func TestBuildScanTrustVerdict(t *testing.T) {
+	clean := art("a1", "claude-code", artifact.TypeSkill, "linter", "sha256-x")
+	clean.Source = artifact.Source{Kind: artifact.SourceNPM, Ref: "1.0.0", Integrity: "sha512-AAA"}
+	locked := lf(clean)
+	locked.Artifacts[0].Approval = &lockfile.Approval{Status: "approved", Sig: "ed25519:x"}
+
+	scan := BuildScan(lf(clean), locked, approvedSet(locked))
+	got := find(t, scan, "linter")
+	if got.Verdict != "trusted" || got.Trust != 100 {
+		t.Fatalf("clean signed npm → trusted/100, got %q/%d", got.Verdict, got.Trust)
+	}
+	if len(got.TrustReasons) == 0 {
+		t.Fatalf("trust reasons must be populated")
+	}
+}
+
+func TestBuildScanUpdatedVsMutatedStatus(t *testing.T) {
+	lockedMut := art("m1", "cursor", artifact.TypeMCPServer, "db", "sha256-old")
+	lockedMut.Source = artifact.Source{Kind: artifact.SourceNPM, Ref: "1.0.0", Integrity: "sha512-A"}
+	curMut := art("m1", "cursor", artifact.TypeMCPServer, "db", "sha256-NEW")
+	curMut.Source = artifact.Source{Kind: artifact.SourceNPM, Ref: "1.0.0", Integrity: "sha512-A"}
+
+	lockedUpd := art("u1", "cursor", artifact.TypeSkill, "fmt", "sha256-old")
+	lockedUpd.Source = artifact.Source{Kind: artifact.SourceNPM, Ref: "1.0.0", Integrity: "sha512-A"}
+	curUpd := art("u1", "cursor", artifact.TypeSkill, "fmt", "sha256-new")
+	curUpd.Source = artifact.Source{Kind: artifact.SourceNPM, Ref: "2.0.0", Integrity: "sha512-B"}
+
+	scan := BuildScan(lf(curMut, curUpd), lf(lockedMut, lockedUpd), nil)
+	if s := find(t, scan, "db").Drift; s != "drifted" {
+		t.Errorf("same-version content move → drifted, got %q", s)
+	}
+	if s := find(t, scan, "fmt").Drift; s != "updated" {
+		t.Errorf("version+content move → updated, got %q", s)
+	}
+	if d := find(t, scan, "fmt").DriftDetail; d == "" {
+		t.Errorf("updated artifact should carry a DriftDetail")
+	}
+}
+
+func TestBuildScanCapabilityDiff(t *testing.T) {
+	locked := art("c1", "claude-code", artifact.TypeSkill, "grower", "sha256-old")
+	locked.Capabilities = artifact.Capabilities{Network: []string{"api.openai.com"}}
+	cur := art("c1", "claude-code", artifact.TypeSkill, "grower", "sha256-new")
+	cur.Capabilities = artifact.Capabilities{
+		Network:    []string{"api.openai.com", "evil.example"},
+		Filesystem: []string{"~/.aws"},
+	}
+	scan := BuildScan(lf(cur), lf(locked), nil)
+	got := find(t, scan, "grower").Capabilities
+	if len(got.AddedNetwork) != 1 || got.AddedNetwork[0] != "evil.example" {
+		t.Errorf("added network host should surface: %+v", got.AddedNetwork)
+	}
+	if len(got.SensitiveAdded) != 1 || got.SensitiveAdded[0] != "~/.aws" {
+		t.Errorf("added secret path should be flagged: %+v", got.SensitiveAdded)
+	}
+}

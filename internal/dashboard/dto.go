@@ -8,6 +8,7 @@ import (
 	"github.com/alexverify/agentguard/internal/domain/artifact"
 	"github.com/alexverify/agentguard/internal/domain/finding"
 	"github.com/alexverify/agentguard/internal/domain/lockfile"
+	"github.com/alexverify/agentguard/internal/domain/trust"
 )
 
 // DashArtifact is the artifact shape the dashboard UI consumes (mirrors the
@@ -39,13 +40,34 @@ type DashArtifact struct {
 	Capabilities   DashCapabilities `json:"capabilities"`
 	Files          []DashFile       `json:"files"`
 	Approval       *DashApproval    `json:"approval,omitempty"`
+
+	// Trust verdict (A1) and drift interpretation (A3).
+	Trust        int          `json:"trust"`
+	Verdict      string       `json:"verdict"` // trusted | review | quarantine
+	TrustReasons []DashReason `json:"trustReasons"`
+	DriftClass   string       `json:"driftClass"`  // none|updated|mutated|broken|added|removed
+	DriftDetail  string       `json:"driftDetail"` // human one-liner for the change card
 }
 
-// DashCapabilities mirrors the declared powers of an artifact.
+// DashReason is one additive contribution to the trust score, for the breakdown.
+type DashReason struct {
+	Label string `json:"label"`
+	Delta int    `json:"delta"`
+}
+
+// DashCapabilities mirrors the declared powers of an artifact, plus the diff
+// against the locked snapshot (A2) so the UI can show capability expansion.
 type DashCapabilities struct {
 	Exec       bool     `json:"exec"`
 	Network    []string `json:"network"`
 	Filesystem []string `json:"filesystem"`
+
+	ExecNewlyAdded    bool     `json:"execNewlyAdded,omitempty"`
+	AddedNetwork      []string `json:"addedNetwork,omitempty"`
+	RemovedNetwork    []string `json:"removedNetwork,omitempty"`
+	AddedFilesystem   []string `json:"addedFilesystem,omitempty"`
+	RemovedFilesystem []string `json:"removedFilesystem,omitempty"`
+	SensitiveAdded    []string `json:"sensitiveAdded,omitempty"` // added FS paths that touch secrets
 }
 
 // DashFile is one entry in the artifact's file manifest.
@@ -94,18 +116,31 @@ func approvedSet(locked lockfile.Lockfile) map[string]bool {
 // pure: all IO (building inventory, reading the lockfile, verifying
 // signatures) happens in the caller.
 func BuildScan(current, locked lockfile.Lockfile, approved map[string]bool) []DashArtifact {
-	diff := lockfile.Compare(locked, current)
-	drift := driftByID(diff)
-	lockedHash := map[string]string{}
-	lockedApproval := map[string]*lockfile.Approval{}
+	classes := lockfile.Classify(locked, current)
+	lockedByID := map[string]lockfile.Entry{}
 	for _, e := range locked.Artifacts {
-		lockedHash[e.ID] = e.ContentHash
-		lockedApproval[e.ID] = e.Approval // approval state is recorded in the lockfile
+		lockedByID[e.ID] = e
 	}
 	scanStamp := relativeStamp(current.GeneratedAt)
 
 	out := make([]DashArtifact, 0, len(current.Artifacts))
 	for _, e := range current.Artifacts {
+		prev, hasLocked := lockedByID[e.ID]
+		class := classes[e.ID]
+
+		capDiff := lockfile.DiffCapabilities(prev.Capabilities, e.Capabilities)
+		secretFS := trust.SensitivePaths(e.Capabilities.Filesystem)
+
+		score := trust.Evaluate(trust.Input{
+			Findings:         e.Findings,
+			Drift:            class,
+			Source:           e.Source,
+			Signed:           approved[e.ID],
+			Exec:             e.Capabilities.Exec,
+			Network:          len(e.Capabilities.Network) > 0,
+			SecretFilesystem: len(secretFS) > 0,
+		})
+
 		out = append(out, DashArtifact{
 			ID:             e.ID,
 			Name:           e.Name,
@@ -115,8 +150,8 @@ func BuildScan(current, locked lockfile.Lockfile, approved map[string]bool) []Da
 			Source:         e.Source.Ref,
 			InstalledAt:    installedAt(e.ModifiedAt, scanStamp),
 			Hash:           e.ContentHash,
-			LockedHash:     lockedHash[e.ID],
-			Drift:          driftStatus(e.ID, drift, lockedHash, approved),
+			LockedHash:     prev.ContentHash,
+			Drift:          driftStatus(class, hasLocked, approved[e.ID]),
 			Findings:       mapFindings(e.Findings),
 			Scope:          e.Scope,
 			SourceKind:     string(e.Source.Kind),
@@ -127,15 +162,54 @@ func BuildScan(current, locked lockfile.Lockfile, approved map[string]bool) []Da
 			Integrity:      e.Source.Integrity,
 			CertSPKI:       e.Source.CertSPKI,
 			Capabilities: DashCapabilities{
-				Exec:       e.Capabilities.Exec,
-				Network:    e.Capabilities.Network,
-				Filesystem: e.Capabilities.Filesystem,
+				Exec:              e.Capabilities.Exec,
+				Network:           e.Capabilities.Network,
+				Filesystem:        e.Capabilities.Filesystem,
+				ExecNewlyAdded:    capDiff.ExecAdded,
+				AddedNetwork:      capDiff.NetworkAdded,
+				RemovedNetwork:    capDiff.NetworkRemoved,
+				AddedFilesystem:   capDiff.FilesystemAdded,
+				RemovedFilesystem: capDiff.FilesystemRemoved,
+				SensitiveAdded:    trust.SensitivePaths(capDiff.FilesystemAdded),
 			},
-			Files:    mapFiles(e.Files),
-			Approval: mapApproval(lockedApproval[e.ID]),
+			Files:        mapFiles(e.Files),
+			Approval:     mapApproval(prev.Approval),
+			Trust:        score.Value,
+			Verdict:      string(score.Verdict),
+			TrustReasons: mapReasons(score.Reasons),
+			DriftClass:   string(class),
+			DriftDetail:  driftDetail(class, prev, e),
 		})
 	}
 	return out
+}
+
+// mapReasons converts the domain reasons into the DTO shape.
+func mapReasons(rs []trust.Reason) []DashReason {
+	out := make([]DashReason, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, DashReason{Label: r.Label, Delta: r.Delta})
+	}
+	return out
+}
+
+// driftDetail is the human one-liner shown on the change card.
+func driftDetail(class lockfile.DriftClass, prev, cur lockfile.Entry) string {
+	switch class {
+	case lockfile.DriftClassMutated:
+		return "content hash changed with no version bump — what runs now is not what you locked"
+	case lockfile.DriftClassBroken:
+		return "updated, but the new version's integrity could not be verified"
+	case lockfile.DriftClassUpdated:
+		if prev.Source.Ref != "" && cur.Source.Ref != "" && prev.Source.Ref != cur.Source.Ref {
+			return "updated from " + prev.Source.Ref + " to " + cur.Source.Ref
+		}
+		return "updated since last audit"
+	case lockfile.DriftClassAdded:
+		return "newly discovered — not in the lockfile"
+	default:
+		return ""
+	}
 }
 
 // installedAt prefers the captured file mtime, falling back to the scan
@@ -180,40 +254,21 @@ func mapApproval(a *lockfile.Approval) *DashApproval {
 	return d
 }
 
-// driftByID indexes the changes that signal drift (content/version/integrity/
-// cert) and additions, by artifact ID.
-func driftByID(diff lockfile.Diff) map[string]lockfile.DriftKind {
-	out := make(map[string]lockfile.DriftKind)
-	for _, c := range diff.Changes {
-		switch c.Kind {
-		case lockfile.DriftAdded:
-			out[c.ID] = lockfile.DriftAdded
-		case lockfile.DriftContentChanged, lockfile.DriftVersionChanged,
-			lockfile.DriftIntegrityChanged, lockfile.DriftCertRotated:
-			// content change is the loudest signal; don't let a weaker kind overwrite it
-			if out[c.ID] != lockfile.DriftContentChanged {
-				out[c.ID] = c.Kind
-			}
-		}
-	}
-	return out
-}
-
-// driftStatus collapses our richer drift model into the dashboard's four
-// mutually-exclusive states, in priority order: drifted > new > unsigned >
-// verified.
-func driftStatus(id string, drift map[string]lockfile.DriftKind, lockedHash map[string]string, approved map[string]bool) string {
-	switch drift[id] {
-	case lockfile.DriftContentChanged, lockfile.DriftVersionChanged,
-		lockfile.DriftIntegrityChanged, lockfile.DriftCertRotated:
+// driftStatus collapses the DriftClass into the dashboard's mutually-exclusive
+// states, in priority order: drifted > updated > new > unsigned > verified.
+func driftStatus(class lockfile.DriftClass, hasLocked, approved bool) string {
+	switch class {
+	case lockfile.DriftClassMutated, lockfile.DriftClassBroken:
 		return "drifted"
-	case lockfile.DriftAdded:
+	case lockfile.DriftClassUpdated:
+		return "updated"
+	case lockfile.DriftClassAdded:
 		return "new"
 	}
-	if _, locked := lockedHash[id]; !locked {
-		return "new" // not in the lockfile at all
+	if !hasLocked {
+		return "new"
 	}
-	if !approved[id] {
+	if !approved {
 		return "unsigned"
 	}
 	return "verified"
