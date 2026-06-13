@@ -14,6 +14,7 @@ import (
 
 	"github.com/alexverify/agentguard/internal/app/ports"
 	"github.com/alexverify/agentguard/internal/buildinfo"
+	"github.com/alexverify/agentguard/internal/domain/advisory"
 	"github.com/alexverify/agentguard/internal/domain/artifact"
 	"github.com/alexverify/agentguard/internal/domain/finding"
 	"github.com/alexverify/agentguard/internal/domain/lockfile"
@@ -63,6 +64,13 @@ func (s *Service) Build(ctx context.Context, scopes []ports.Scope) (lockfile.Loc
 	for i := range arts {
 		if err := s.enrich(ctx, &arts[i]); err != nil {
 			return lockfile.Lockfile{}, fmt.Errorf("artifact %q: %w", arts[i].Name, err)
+		}
+		// Match against the known-malicious feed last, so the content hash set
+		// during enrich is available. Runs for every artifact regardless of how
+		// resolution went — a known-bad package that failed to pin still gets
+		// flagged by name or source.
+		for _, adv := range advisory.Match(advisory.Default(), arts[i].Name, arts[i].Source.Ref, arts[i].ContentHash) {
+			arts[i].Findings = append(arts[i].Findings, adv.AsFinding())
 		}
 	}
 	return lockfile.Build(arts, s.deps.Clock.Now().UTC(), s.deps.Generator), nil

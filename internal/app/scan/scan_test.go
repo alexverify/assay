@@ -114,3 +114,27 @@ func TestScanIsDeterministic(t *testing.T) {
 		t.Fatal("scan output is not deterministic")
 	}
 }
+
+func TestScanFlagsKnownMaliciousArtifact(t *testing.T) {
+	svc := newService(scan.Deps{
+		Discoverer: apptest.Discoverer{Artifacts: []artifact.Artifact{mcp("postmark-mcp")}},
+		Resolver:   apptest.Resolver{},
+		Hasher:     apptest.Hasher{HashValue: "sha256-deadbeef"},
+		Analyzer:   apptest.Analyzer{},
+		Lock:       apptest.NewLockStore(),
+		Reporter:   apptest.Reporter{},
+	})
+	lf, err := svc.Build(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, f := range lf.Artifacts[0].Findings {
+		if f.RuleID == "ADVISORY-postmark-mcp-bcc" && f.Severity == finding.SeverityCritical {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("postmark-mcp should carry the advisory finding, got %+v", lf.Artifacts[0].Findings)
+	}
+}
