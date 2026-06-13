@@ -66,6 +66,10 @@ func (a *App) Execute(ctx context.Context, args []string) int {
 		return a.runList(ctx, rest)
 	case "approve":
 		return a.runApprove(ctx, rest)
+	case "quarantine":
+		return a.runQuarantine(ctx, rest)
+	case "freeze":
+		return a.runFreeze(ctx, rest)
 	case "sign":
 		return a.runSign(ctx, rest)
 	case "key":
@@ -106,6 +110,8 @@ Commands:
   digest    Summarize what changed since the lockfile (what to review)
   list      Print the current inventory across tools
   approve   Mark artifact(s) as approved in the lockfile
+  quarantine Disable artifact(s) pending review (--remove to lift)
+  freeze    Pin artifact(s); any later drift fails the gate (--remove to lift)
   sign      Sign the lockfile with the local key
   key       Manage signing identity (show) and trusted keys (trust)
   wrap      Route a tool's MCP servers through the auditing shim (--status to inspect)

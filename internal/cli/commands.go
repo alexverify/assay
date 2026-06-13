@@ -303,6 +303,72 @@ func (a *App) runApprove(ctx context.Context, args []string) int {
 	return ExitOK
 }
 
+// runQuarantine disables artifact(s) pending review: the policy gate fails any
+// quarantined artifact that is still installed.
+func (a *App) runQuarantine(ctx context.Context, args []string) int {
+	return a.runMark(ctx, "quarantine", args, func(e *lockfile.Entry, on bool) { e.Quarantined = on })
+}
+
+// runFreeze pins artifact(s): any later drift on a frozen artifact is a hard
+// policy violation rather than a reviewable change.
+func (a *App) runFreeze(ctx context.Context, args []string) int {
+	return a.runMark(ctx, "freeze", args, func(e *lockfile.Entry, on bool) { e.Frozen = on })
+}
+
+// runMark is the shared read-modify-write for the lockfile remediation flags
+// (quarantine, freeze). set toggles the relevant flag; --remove lifts it.
+func (a *App) runMark(ctx context.Context, name string, args []string, set func(*lockfile.Entry, bool)) int {
+	fs := a.flagSet(name)
+	lock := fs.String("lockfile", "agentlock.json", "lockfile path")
+	all := fs.Bool("all", false, "apply to every artifact in the lockfile")
+	remove := fs.Bool("remove", false, "lift the "+name+" instead of applying it")
+	if err := fs.Parse(args); err != nil {
+		return ExitUsage
+	}
+	ids := fs.Args()
+	if *all && len(ids) > 0 {
+		fmt.Fprintf(a.Stderr, "%s: --all and explicit IDs are mutually exclusive\n", name)
+		return ExitUsage
+	}
+	if !*all && len(ids) == 0 {
+		fmt.Fprintf(a.Stderr, "%s: provide one or more artifact IDs (prefixes accepted), or --all\n", name)
+		return ExitUsage
+	}
+
+	store := lockstore.New()
+	lf, err := store.Read(ctx, *lock)
+	if err != nil {
+		if errors.Is(err, ports.ErrNoLockfile) {
+			fmt.Fprintf(a.Stderr, "%s: no lockfile found; run 'agentguard scan' first\n", name)
+			return ExitError
+		}
+		fmt.Fprintf(a.Stderr, "%s: %v\n", name, err)
+		return ExitError
+	}
+
+	matched := 0
+	for i := range lf.Artifacts {
+		if *all || matchesAnyPrefix(lf.Artifacts[i].ID, ids) {
+			set(&lf.Artifacts[i], !*remove)
+			matched++
+		}
+	}
+	if matched == 0 {
+		fmt.Fprintf(a.Stderr, "%s: no artifact matched %v\n", name, ids)
+		return ExitError
+	}
+	if err := store.Write(ctx, *lock, lf); err != nil {
+		fmt.Fprintf(a.Stderr, "%s: %v\n", name, err)
+		return ExitError
+	}
+	action := name
+	if *remove {
+		action = "un" + name
+	}
+	fmt.Fprintf(a.Stdout, "%s: updated %d artifact(s)\n", action, matched)
+	return ExitOK
+}
+
 func (a *App) runSign(ctx context.Context, args []string) int {
 	fs := a.flagSet("sign")
 	lock := fs.String("lockfile", "agentlock.json", "lockfile to sign")

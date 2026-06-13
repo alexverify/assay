@@ -188,3 +188,57 @@ func TestDigestReportsChangesThenClean(t *testing.T) {
 		t.Fatalf("after scan, digest should be clean, got:\n%s", out3.String())
 	}
 }
+
+func TestQuarantineFailsVerifyCI(t *testing.T) {
+	ctx := context.Background()
+	dir, lock := fixtureProject(t)
+
+	app, _, errBuf := newApp()
+	if code := app.Execute(ctx, []string{"scan", "--path", dir, "--lockfile", lock}); code != cli.ExitOK {
+		t.Fatalf("scan exit = %d, stderr=%s", code, errBuf.String())
+	}
+
+	// Read the lockfile to get an artifact ID prefix.
+	raw, err := os.ReadFile(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lf struct {
+		Artifacts []struct {
+			ID string `json:"id"`
+		} `json:"artifacts"`
+	}
+	if err := json.Unmarshal(raw, &lf); err != nil {
+		t.Fatal(err)
+	}
+	id := lf.Artifacts[0].ID
+
+	// Quarantine it.
+	app2, out2, _ := newApp()
+	if code := app2.Execute(ctx, []string{"quarantine", "--lockfile", lock, id}); code != cli.ExitOK {
+		t.Fatalf("quarantine exit = %d", code)
+	}
+	if !strings.Contains(out2.String(), "updated 1 artifact") {
+		t.Fatalf("quarantine output = %q", out2.String())
+	}
+
+	// verify --ci must now fail (quarantined artifact still installed).
+	app3, out3, _ := newApp()
+	code := app3.Execute(ctx, []string{"verify", "--ci", "--path", dir, "--lockfile", lock})
+	if code != cli.ExitDrift {
+		t.Fatalf("verify --ci with quarantined artifact exit = %d, want %d", code, cli.ExitDrift)
+	}
+	if !strings.Contains(out3.String(), "quarantined") {
+		t.Fatalf("expected quarantined policy message, got:\n%s", out3.String())
+	}
+
+	// Lifting the quarantine makes it pass again.
+	app4, _, _ := newApp()
+	if code := app4.Execute(ctx, []string{"quarantine", "--remove", "--lockfile", lock, id}); code != cli.ExitOK {
+		t.Fatalf("unquarantine exit = %d", code)
+	}
+	app5, _, _ := newApp()
+	if code := app5.Execute(ctx, []string{"verify", "--ci", "--path", dir, "--lockfile", lock}); code != cli.ExitOK {
+		t.Fatalf("verify --ci after lifting quarantine exit = %d, want OK", code)
+	}
+}
