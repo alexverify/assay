@@ -183,6 +183,12 @@ func (a *App) auditDir() string {
 	return filepath.Join(home, ".assay", "audit")
 }
 
+// historyPath is the default posture-trend history file.
+func (a *App) historyPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".assay", "history.jsonl")
+}
+
 // keyPath is the default local signing-key location.
 func (a *App) keyPath() string {
 	home, _ := os.UserHomeDir()

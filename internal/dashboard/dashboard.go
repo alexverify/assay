@@ -25,6 +25,7 @@ import (
 	"github.com/alexverify/assay/internal/domain/audit"
 	"github.com/alexverify/assay/internal/domain/lockfile"
 	"github.com/alexverify/assay/internal/domain/policy"
+	"github.com/alexverify/assay/internal/domain/posture"
 )
 
 //go:embed all:assets
@@ -55,6 +56,9 @@ type Deps struct {
 	// read-modify-write, backing the policy-editor (C3), mute (C4), and egress
 	// allowlist (D2) write endpoints. Optional: when nil they are disabled.
 	MutatePolicy func(ctx context.Context, fn func(p *policy.Policy) error) error
+	// History returns the counts-only posture trend (E2). Optional: when nil,
+	// GET /api/history returns an empty trend.
+	History func(context.Context) ([]posture.Posture, error)
 	// Static overrides the embedded UI assets (used in tests); nil uses the
 	// embedded Next.js export.
 	Static fs.FS
@@ -109,6 +113,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/policy", s.handlePolicy)
 	mux.HandleFunc("/api/mute", s.handleMute)
 	mux.HandleFunc("/api/egress-allow", s.handleEgressAllow)
+	mux.HandleFunc("/api/history", s.handleHistory)
 	if s.static != nil {
 		mux.Handle("/", http.FileServer(http.FS(s.static)))
 	}
@@ -252,6 +257,22 @@ func (s *Server) mutate(w http.ResponseWriter, r *http.Request, set func(*lockfi
 	writeJSON(w, struct {
 		Status string `json:"status"`
 	}{Status: "ok"})
+}
+
+// handleHistory serves the posture trend (E2) for the dashboard sparkline.
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	var hist []posture.Posture
+	if s.deps.History != nil {
+		got, err := s.deps.History(r.Context())
+		if err != nil {
+			httpError(w, err)
+			return
+		}
+		hist = got
+	}
+	writeJSON(w, struct {
+		History []posture.Posture `json:"history"`
+	}{History: hist})
 }
 
 // handlePolicy serves the committed policy (GET) and edits its allow/block

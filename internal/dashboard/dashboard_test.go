@@ -16,6 +16,7 @@ import (
 	"github.com/alexverify/assay/internal/domain/finding"
 	"github.com/alexverify/assay/internal/domain/lockfile"
 	"github.com/alexverify/assay/internal/domain/policy"
+	"github.com/alexverify/assay/internal/domain/posture"
 )
 
 func testServer(t *testing.T) *dashboard.Server {
@@ -312,6 +313,30 @@ func TestPolicyWriteReadOnlyWhenNoMutatePolicy(t *testing.T) {
 	srv := testServer(t) // no MutatePolicy dep
 	if rec := postJSON(t, srv.Handler(), "/api/mute", srv.Token(), `{"rule":"X"}`); rec.Code != http.StatusForbidden {
 		t.Fatalf("read-only policy server should refuse writes with 403, got %d", rec.Code)
+	}
+}
+
+func TestHistoryEndpoint(t *testing.T) {
+	lf := lockfile.Build(nil, time.Unix(0, 0).UTC(), "t")
+	srv := dashboard.New(dashboard.Deps{
+		Inventory: func(context.Context) (lockfile.Lockfile, error) { return lf, nil },
+		Locked:    func(context.Context) (lockfile.Lockfile, error) { return lf, nil },
+		History: func(context.Context) ([]posture.Posture, error) {
+			return []posture.Posture{{Total: 5, Trusted: 5}, {Total: 6, Trusted: 5, Review: 1}}, nil
+		},
+	})
+	rec := get(t, srv.Handler(), "/api/history")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("history status = %d", rec.Code)
+	}
+	var resp struct {
+		History []posture.Posture `json:"history"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.History) != 2 || resp.History[1].Review != 1 {
+		t.Errorf("history payload = %+v", resp.History)
 	}
 }
 

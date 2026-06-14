@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/alexverify/assay/internal/adapters/auditlog"
+	"github.com/alexverify/assay/internal/adapters/historystore"
 	"github.com/alexverify/assay/internal/adapters/lockstore"
 	"github.com/alexverify/assay/internal/adapters/policystore"
 	"github.com/alexverify/assay/internal/app/ports"
@@ -15,6 +16,7 @@ import (
 	"github.com/alexverify/assay/internal/domain/audit"
 	"github.com/alexverify/assay/internal/domain/lockfile"
 	"github.com/alexverify/assay/internal/domain/policy"
+	"github.com/alexverify/assay/internal/domain/posture"
 )
 
 // runDashboard serves the local, read-only web dashboard on loopback. It reads
@@ -26,6 +28,7 @@ func (a *App) runDashboard(ctx context.Context, args []string) int {
 	addr := fs.String("addr", "127.0.0.1:7113", "loopback address to listen on")
 	auditDir := fs.String("audit-dir", a.auditDir(), "audit log directory")
 	policyPath := fs.String("policy", "assay.policy.json", "policy file the editor reads and writes")
+	historyPath := fs.String("history", a.historyPath(), "posture-trend history file")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -75,6 +78,9 @@ func (a *App) runDashboard(ctx context.Context, args []string) int {
 				return err
 			}
 			return policystore.Save(*policyPath, p)
+		},
+		History: func(context.Context) ([]posture.Posture, error) {
+			return historystore.Read(*historyPath)
 		},
 	})
 

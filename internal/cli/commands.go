@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alexverify/assay/internal/adapters/historystore"
 	"github.com/alexverify/assay/internal/adapters/lockstore"
 	"github.com/alexverify/assay/internal/adapters/notify"
 	"github.com/alexverify/assay/internal/adapters/policystore"
@@ -21,6 +22,7 @@ import (
 	"github.com/alexverify/assay/internal/app/verify"
 	"github.com/alexverify/assay/internal/domain/finding"
 	"github.com/alexverify/assay/internal/domain/lockfile"
+	"github.com/alexverify/assay/internal/domain/posture"
 )
 
 // commonFlags are shared by the read pipeline commands.
@@ -54,13 +56,29 @@ func (a *App) runScan(ctx context.Context, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
+	// Read the prior lockfile first (best-effort) so the verdict can report drift
+	// against the baseline scan is about to overwrite.
+	prior, _ := lockstore.New().Read(ctx, *c.lockfile)
+
 	svc := a.scanService(*c.json, *c.rules)
-	if _, err := svc.Run(ctx, scan.Options{
+	lf, err := svc.Run(ctx, scan.Options{
 		Scopes:       a.scopes(*c.path, *c.global),
 		LockfilePath: *c.lockfile,
-	}, a.Stdout); err != nil {
+	}, a.Stdout)
+	if err != nil {
 		fmt.Fprintf(a.Stderr, "scan: %v\n", err)
 		return ExitError
+	}
+
+	// The single-verdict summary (E2): the first-run "are we OK?" line, and a
+	// counts-only data point appended to the local posture trend. Suppressed in
+	// JSON mode to keep machine output clean.
+	if !*c.json {
+		p := posture.Summarize(lf, prior, posture.ApprovedSet(prior), a.Clock.Now().UTC())
+		fmt.Fprintln(a.Stdout, p.Line())
+		if err := historystore.Append(a.historyPath(), p); err != nil {
+			fmt.Fprintf(a.Stderr, "scan: history: %v\n", err)
+		}
 	}
 	return ExitOK
 }
@@ -173,6 +191,13 @@ func (a *App) runDigest(ctx context.Context, args []string) int {
 	if err != nil && !errors.Is(err, ports.ErrNoLockfile) {
 		fmt.Fprintf(a.Stderr, "digest: %v\n", err)
 		return ExitError
+	}
+
+	// Append a counts-only posture snapshot so the dashboard trend gains a data
+	// point from each digest run (best-effort; a history error never fails the digest).
+	p := posture.Summarize(current, locked, posture.ApprovedSet(locked), a.Clock.Now().UTC())
+	if err := historystore.Append(a.historyPath(), p); err != nil {
+		fmt.Fprintf(a.Stderr, "digest: history: %v\n", err)
 	}
 
 	summary := digestSummary(locked, current)
