@@ -5,11 +5,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os/user"
 	"strings"
 
 	"github.com/alexverify/agentguard/internal/adapters/lockstore"
+	"github.com/alexverify/agentguard/internal/adapters/notify"
 	"github.com/alexverify/agentguard/internal/adapters/policystore"
 	"github.com/alexverify/agentguard/internal/adapters/sign"
 	"github.com/alexverify/agentguard/internal/app/ports"
@@ -155,6 +155,7 @@ func (a *App) runDiff(ctx context.Context, args []string) int {
 func (a *App) runDigest(ctx context.Context, args []string) int {
 	fs := a.flagSet("digest")
 	c := bindCommon(fs)
+	notifyURL := fs.String("notify", "", "POST the digest to this webhook (Slack-compatible {\"text\":…})")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -169,14 +170,24 @@ func (a *App) runDigest(ctx context.Context, args []string) int {
 		fmt.Fprintf(a.Stderr, "digest: %v\n", err)
 		return ExitError
 	}
-	writeDigest(a.Stdout, locked, current)
+
+	summary := digestSummary(locked, current)
+	fmt.Fprint(a.Stdout, summary)
+	if *notifyURL != "" {
+		if err := notify.New().Post(ctx, *notifyURL, summary); err != nil {
+			fmt.Fprintf(a.Stderr, "digest: notify: %v\n", err)
+			return ExitError
+		}
+		fmt.Fprintln(a.Stdout, "\nsent digest to webhook")
+	}
 	return ExitOK
 }
 
-// writeDigest renders the drift-class breakdown and the list of artifacts worth
-// reviewing. It uses only the pure domain (Classify + finding counts), so it
-// stays in lockstep with the dashboard's interpretation of drift.
-func writeDigest(w io.Writer, locked, current lockfile.Lockfile) {
+// digestSummary renders the drift-class breakdown and the list of artifacts
+// worth reviewing. It uses only the pure domain (Classify + finding counts), so
+// it stays in lockstep with the dashboard's interpretation of drift. The string
+// is printed to stdout and, optionally, posted to a webhook.
+func digestSummary(locked, current lockfile.Lockfile) string {
 	classes := lockfile.Classify(locked, current)
 	var unchanged, updated, drifted, fresh int
 	type change struct{ name, label string }
@@ -206,20 +217,22 @@ func writeDigest(w io.Writer, locked, current lockfile.Lockfile) {
 		}
 	}
 
-	fmt.Fprintf(w, "agentguard digest — %d artifact(s)\n", len(current.Artifacts))
-	fmt.Fprintf(w, "  unchanged: %d\n  updated:   %d\n  drifted:   %d\n  new:       %d\n",
+	var b strings.Builder
+	fmt.Fprintf(&b, "agentguard digest — %d artifact(s)\n", len(current.Artifacts))
+	fmt.Fprintf(&b, "  unchanged: %d\n  updated:   %d\n  drifted:   %d\n  new:       %d\n",
 		unchanged, updated, drifted, fresh)
-	fmt.Fprintf(w, "  findings:  %d (critical=%d high=%d medium=%d low=%d)\n",
+	fmt.Fprintf(&b, "  findings:  %d (critical=%d high=%d medium=%d low=%d)\n",
 		total, counts[finding.SeverityCritical], counts[finding.SeverityHigh],
 		counts[finding.SeverityMedium], counts[finding.SeverityLow])
 	if len(changes) == 0 {
-		fmt.Fprintln(w, "\nnothing changed since the lockfile — you're clear.")
-		return
+		fmt.Fprint(&b, "\nnothing changed since the lockfile — you're clear.\n")
+		return b.String()
 	}
-	fmt.Fprintln(w, "\nchanges to review:")
+	fmt.Fprint(&b, "\nchanges to review:\n")
 	for _, ch := range changes {
-		fmt.Fprintf(w, "  [%s] %s\n", ch.label, ch.name)
+		fmt.Fprintf(&b, "  [%s] %s\n", ch.label, ch.name)
 	}
+	return b.String()
 }
 
 func (a *App) runList(ctx context.Context, args []string) int {

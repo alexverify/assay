@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,5 +267,29 @@ func TestBlockPublisherPolicyFailsVerifyCI(t *testing.T) {
 	}
 	if !strings.Contains(out2.String(), "blocked artifact") {
 		t.Fatalf("expected a blocked-artifact policy message, got:\n%s", out2.String())
+	}
+}
+
+func TestDigestNotifyPostsToWebhook(t *testing.T) {
+	ctx := context.Background()
+	dir, lock := fixtureProject(t)
+
+	var got map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	app, out, errBuf := newApp()
+	code := app.Execute(ctx, []string{"digest", "--path", dir, "--lockfile", lock, "--notify", srv.URL})
+	if code != cli.ExitOK {
+		t.Fatalf("digest --notify exit = %d, stderr=%s", code, errBuf.String())
+	}
+	if !strings.Contains(got["text"], "agentguard digest") {
+		t.Fatalf("webhook payload missing digest text: %q", got["text"])
+	}
+	if !strings.Contains(out.String(), "sent digest to webhook") {
+		t.Fatalf("stdout should confirm the send, got:\n%s", out.String())
 	}
 }
