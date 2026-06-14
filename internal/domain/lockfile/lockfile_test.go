@@ -26,6 +26,71 @@ func buildOne(a artifact.Artifact) Lockfile {
 	return Build([]artifact.Artifact{a}, fixedTime, "assay/test")
 }
 
+func TestDiffFilesAddedRemovedModified(t *testing.T) {
+	prev := []artifact.FileRef{
+		{Path: "index.js", Hash: "aaa"},
+		{Path: "hooks/postinstall.sh", Hash: "bbb"},
+		{Path: "README.md", Hash: "ccc"},
+	}
+	cur := []artifact.FileRef{
+		{Path: "index.js", Hash: "aaa"},             // unchanged
+		{Path: "hooks/postinstall.sh", Hash: "ZZZ"}, // modified
+		{Path: "dist/bundle.min.js", Hash: "ddd"},   // added
+		// README.md removed
+	}
+
+	d := DiffFiles(prev, cur)
+
+	if got, want := d.Added, []string{"dist/bundle.min.js"}; !equalStrings(got, want) {
+		t.Errorf("Added = %v, want %v", got, want)
+	}
+	if got, want := d.Removed, []string{"README.md"}; !equalStrings(got, want) {
+		t.Errorf("Removed = %v, want %v", got, want)
+	}
+	if got, want := d.Modified, []string{"hooks/postinstall.sh"}; !equalStrings(got, want) {
+		t.Errorf("Modified = %v, want %v", got, want)
+	}
+	if !d.Changed() {
+		t.Error("Changed() = false, want true")
+	}
+}
+
+func TestDiffFilesNoChange(t *testing.T) {
+	files := []artifact.FileRef{
+		{Path: "b.js", Hash: "2"},
+		{Path: "a.js", Hash: "1"},
+	}
+	d := DiffFiles(files, files)
+	if d.Changed() {
+		t.Errorf("Changed() = true for identical manifests, want false (%+v)", d)
+	}
+}
+
+func TestDiffFilesDeterministicOrder(t *testing.T) {
+	prev := []artifact.FileRef{}
+	cur := []artifact.FileRef{
+		{Path: "z.js", Hash: "1"},
+		{Path: "a.js", Hash: "2"},
+		{Path: "m.js", Hash: "3"},
+	}
+	d := DiffFiles(prev, cur)
+	if got, want := d.Added, []string{"a.js", "m.js", "z.js"}; !equalStrings(got, want) {
+		t.Errorf("Added = %v, want sorted %v", got, want)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestBuildSortsByID(t *testing.T) {
 	a := art("zebra", "sha256-1")
 	b := art("alpha", "sha256-2")

@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { X, FileCode2, ShieldCheck, ShieldAlert, Network, FolderTree, Terminal, EyeOff } from "lucide-react"
+import { X, FileCode2, ShieldCheck, ShieldAlert, Network, FolderTree, Terminal, EyeOff, GitCompareArrows } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { KIND_LABELS, PATTERN_LABELS, type Artifact } from "@/lib/scan-data"
 import { SeverityBadge, DriftBadge, VerdictBadge } from "@/components/dashboard/badges"
@@ -113,6 +113,7 @@ function DrawerBody({
         <ProvenanceLadder a={a} />
         <Provenance a={a} />
         <Integrity a={a} />
+        <ChangedFiles a={a} />
         <Capabilities a={a} />
         <Findings a={a} live={live} onChanged={onChanged} />
         <FileManifest a={a} />
@@ -319,6 +320,50 @@ function Integrity({ a }: { a: Artifact }) {
         </p>
       ) : null}
     </Section>
+  )
+}
+
+// ChangedFiles renders the file-manifest diff (H1): exactly which files were
+// added / removed / modified since the locked, audited snapshot. This is the
+// content-free rug-pull view — it names the changed files (e.g. a new
+// hooks/postinstall.sh) without needing to store their bytes. Shown only when a
+// drift actually moved files.
+function ChangedFiles({ a }: { a: Artifact }) {
+  const d = a.fileChanges
+  if (!d) return null
+  const added = d.added ?? []
+  const removed = d.removed ?? []
+  const modified = d.modified ?? []
+  const total = added.length + removed.length + modified.length
+  if (total === 0) return null
+
+  return (
+    <Section icon={GitCompareArrows} title={`Changed files (${total})`}>
+      <p className="mb-2 text-xs text-muted-foreground">
+        What moved on disk since the locked snapshot. Per-file hashes are recorded, so the exact files
+        that changed are named here — the rug-pull surface.
+      </p>
+      <div className="overflow-hidden rounded-md border border-border bg-background font-mono text-[11px]">
+        {modified.map((p) => (
+          <FileChangeRow key={`m-${p}`} sigil="~" path={p} className="text-sev-high" />
+        ))}
+        {added.map((p) => (
+          <FileChangeRow key={`a-${p}`} sigil="+" path={p} className="text-sev-critical" />
+        ))}
+        {removed.map((p) => (
+          <FileChangeRow key={`r-${p}`} sigil="−" path={p} className="text-muted-foreground line-through" />
+        ))}
+      </div>
+    </Section>
+  )
+}
+
+function FileChangeRow({ sigil, path, className }: { sigil: string; path: string; className: string }) {
+  return (
+    <div className="flex items-baseline gap-2 border-b border-border/60 px-3 py-1.5 last:border-0">
+      <span className={cn("w-3 shrink-0 text-center", className)}>{sigil}</span>
+      <span className={cn("truncate", className)}>{path}</span>
+    </div>
   )
 }
 

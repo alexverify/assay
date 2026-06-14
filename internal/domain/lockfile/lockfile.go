@@ -320,6 +320,55 @@ func stringsMinus(a, b []string) []string {
 	return out
 }
 
+// FileDiff is the per-file change between an artifact's locked and current
+// manifests, by path. It answers "which files changed in this drift" without
+// storing any content: the lockfile records per-file hashes, so a moved hash on
+// a stable path is a Modified file, a new path is Added, a vanished path Removed.
+// This is the offline, content-free core of the rug-pull diff view (H1).
+type FileDiff struct {
+	Added    []string `json:"added,omitempty"`    // paths present now, absent before
+	Removed  []string `json:"removed,omitempty"`  // paths present before, absent now
+	Modified []string `json:"modified,omitempty"` // same path, different hash
+}
+
+// Changed reports whether any file was added, removed, or modified.
+func (d FileDiff) Changed() bool {
+	return len(d.Added) > 0 || len(d.Removed) > 0 || len(d.Modified) > 0
+}
+
+// DiffFiles compares two file manifests by path and returns the added, removed,
+// and modified paths. Output slices are sorted for deterministic display.
+func DiffFiles(prev, cur []artifact.FileRef) FileDiff {
+	prevByPath := make(map[string]string, len(prev))
+	for _, f := range prev {
+		prevByPath[f.Path] = f.Hash
+	}
+	curByPath := make(map[string]string, len(cur))
+	for _, f := range cur {
+		curByPath[f.Path] = f.Hash
+	}
+
+	var d FileDiff
+	for _, f := range cur {
+		old, ok := prevByPath[f.Path]
+		switch {
+		case !ok:
+			d.Added = append(d.Added, f.Path)
+		case old != f.Hash:
+			d.Modified = append(d.Modified, f.Path)
+		}
+	}
+	for _, f := range prev {
+		if _, ok := curByPath[f.Path]; !ok {
+			d.Removed = append(d.Removed, f.Path)
+		}
+	}
+	sort.Strings(d.Added)
+	sort.Strings(d.Removed)
+	sort.Strings(d.Modified)
+	return d
+}
+
 // NewFindings returns findings present in current but not in locked, at or
 // above the given severity. verify --ci uses this to fail a build on newly
 // introduced critical/high issues without re-flagging accepted ones.

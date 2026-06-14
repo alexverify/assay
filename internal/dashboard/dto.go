@@ -58,6 +58,12 @@ type DashArtifact struct {
 	// lockfile and not pulled from a known registry/package source — an
 	// "installed but never declared" extension (OWASP MCP09 / AST09).
 	Shadow bool `json:"shadow,omitempty"`
+
+	// FileChanges is the file-manifest diff against the locked snapshot (H1):
+	// which files were added, removed, or modified in a drift. Populated only
+	// when a locked prior exists and its manifest differs — the content-free,
+	// offline core of the rug-pull diff view. nil when there is nothing to diff.
+	FileChanges *lockfile.FileDiff `json:"fileChanges,omitempty"`
 }
 
 // DashReason is one additive contribution to the trust score, for the breakdown.
@@ -201,9 +207,25 @@ func BuildScan(current, locked lockfile.Lockfile, approved map[string]bool) []Da
 			Frozen:       prev.Frozen,
 			Provenance:   provenance.Assess(e.Source, approved[e.ID]),
 			Shadow:       isShadow(class, hasLocked, e.Source.Kind),
+			FileChanges:  fileChanges(hasLocked, prev.Files, e.Files),
 		})
 	}
 	return out
+}
+
+// fileChanges returns the file-manifest diff against the locked snapshot (H1),
+// or nil when there is nothing to diff: a brand-new artifact has no prior, and
+// an unchanged manifest has no diff to show. Keeping it nil lets the UI render
+// the section only when files actually moved.
+func fileChanges(hasLocked bool, prev, cur []artifact.FileRef) *lockfile.FileDiff {
+	if !hasLocked {
+		return nil
+	}
+	d := lockfile.DiffFiles(prev, cur)
+	if !d.Changed() {
+		return nil
+	}
+	return &d
 }
 
 // mapReasons converts the domain reasons into the DTO shape.

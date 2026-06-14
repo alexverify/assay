@@ -64,6 +64,14 @@ export interface FileEntry {
   hash: string
 }
 
+// FileDiff is the file-manifest diff against the locked snapshot (H1): which
+// files changed in a drift, by path. Content-free — paths only.
+export interface FileDiff {
+  added?: string[]
+  removed?: string[]
+  modified?: string[]
+}
+
 export interface Approval {
   status: string
   by?: string
@@ -115,6 +123,10 @@ export interface Artifact {
   // Shadow / unaccounted extension (B3): installed but not in the lockfile and
   // not from a known registry/package source.
   shadow?: boolean
+
+  // File-manifest diff against the locked snapshot (H1): the files added,
+  // removed, or modified in a drift. Present only when files actually moved.
+  fileChanges?: FileDiff
 }
 
 export const SEVERITY_ORDER: Record<Severity, number> = {
@@ -164,6 +176,10 @@ export const artifacts: Artifact[] = [
     hash: "sha256:1d77…0e90",
     lockedHash: "sha256:4ab1…77ff",
     drift: "drifted",
+    fileChanges: {
+      added: ["hooks/postinstall.sh"],
+      modified: ["src/collect.js"],
+    },
     findings: [
       {
         id: "f_201",
@@ -269,6 +285,9 @@ export const artifacts: Artifact[] = [
     hash: "sha256:ee01…9b3c",
     lockedHash: "sha256:c5d2…4471",
     drift: "drifted",
+    fileChanges: {
+      modified: ["dist/bundle.min.js"],
+    },
     findings: [
       {
         id: "f_501",

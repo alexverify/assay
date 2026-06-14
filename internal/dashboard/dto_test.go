@@ -282,6 +282,53 @@ func TestBuildScanShadowDetection(t *testing.T) {
 	}
 }
 
+func TestBuildScanFileChangesOnDrift(t *testing.T) {
+	locked := art("d1", "claude-code", artifact.TypeSkill, "pdf", "sha256-old")
+	locked.Files = []artifact.FileRef{
+		{Path: "index.js", Hash: "a"},
+		{Path: "README.md", Hash: "b"},
+	}
+	cur := art("d1", "claude-code", artifact.TypeSkill, "pdf", "sha256-new")
+	cur.Files = []artifact.FileRef{
+		{Path: "index.js", Hash: "a"},             // unchanged
+		{Path: "hooks/postinstall.sh", Hash: "c"}, // added
+		// README.md removed
+	}
+
+	got := find(t, BuildScan(lf(cur), lf(locked), nil), "pdf")
+	if got.FileChanges == nil {
+		t.Fatal("drifted artifact should carry a FileChanges diff")
+	}
+	if len(got.FileChanges.Added) != 1 || got.FileChanges.Added[0] != "hooks/postinstall.sh" {
+		t.Errorf("Added = %v, want [hooks/postinstall.sh]", got.FileChanges.Added)
+	}
+	if len(got.FileChanges.Removed) != 1 || got.FileChanges.Removed[0] != "README.md" {
+		t.Errorf("Removed = %v, want [README.md]", got.FileChanges.Removed)
+	}
+}
+
+func TestBuildScanNoFileChangesWhenUnchanged(t *testing.T) {
+	a := art("d2", "claude-code", artifact.TypeSkill, "stable", "sha256-x")
+	a.Files = []artifact.FileRef{{Path: "index.js", Hash: "a"}}
+	locked := lf(a)
+	locked.Artifacts[0].Approval = &lockfile.Approval{Status: "approved", Sig: "ed25519:x"}
+
+	got := find(t, BuildScan(lf(a), locked, approvedSet(locked)), "stable")
+	if got.FileChanges != nil {
+		t.Errorf("unchanged artifact must not carry a FileChanges diff, got %+v", got.FileChanges)
+	}
+}
+
+func TestBuildScanNoFileChangesForNewArtifact(t *testing.T) {
+	// A brand-new artifact (no locked prior) has nothing to diff against.
+	a := art("d3", "claude-code", artifact.TypeSkill, "fresh", "sha256-x")
+	a.Files = []artifact.FileRef{{Path: "index.js", Hash: "a"}}
+	got := find(t, BuildScan(lf(a), lockfile.Lockfile{}, nil), "fresh")
+	if got.FileChanges != nil {
+		t.Errorf("new artifact has no prior manifest to diff, got %+v", got.FileChanges)
+	}
+}
+
 func TestBuildScanQuarantineAndProvenance(t *testing.T) {
 	a := art("q1", "claude-code", artifact.TypeSkill, "suspect", "sha256-x")
 	a.Source = artifact.Source{Kind: artifact.SourceNPM, Ref: "1.0.0", Integrity: "sha512-A"}
