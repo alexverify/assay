@@ -12,6 +12,8 @@ import {
   Inbox,
   Activity as ActivityIcon,
   AlertTriangle,
+  SlidersHorizontal,
+  EyeOff,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
@@ -30,11 +32,18 @@ import {
   SEVERITY_STYLES,
 } from "@/lib/scan-utils"
 import { useScan } from "@/lib/use-scan"
+import {
+  fetchPolicy,
+  savePolicy,
+  isPolicyWritable,
+  type PolicyLists,
+  type PolicyMute,
+} from "@/lib/actions"
 import { StatCard } from "@/components/dashboard/stat-card"
 import { SeverityBadge, DriftBadge, VerdictBadge } from "@/components/dashboard/badges"
 import { ArtifactDrawer } from "@/components/dashboard/artifact-drawer"
 
-type TabId = "changes" | "inventory" | "findings" | "drift" | "activity"
+type TabId = "changes" | "inventory" | "findings" | "drift" | "activity" | "policy"
 
 const TABS: { id: TabId; label: string; icon: typeof Boxes }[] = [
   { id: "changes", label: "Changes", icon: Inbox },
@@ -42,6 +51,7 @@ const TABS: { id: TabId; label: string; icon: typeof Boxes }[] = [
   { id: "findings", label: "Security Findings", icon: ShieldAlert },
   { id: "drift", label: "Rug-pull / Drift", icon: GitCompareArrows },
   { id: "activity", label: "Activity", icon: ActivityIcon },
+  { id: "policy", label: "Policy", icon: SlidersHorizontal },
 ]
 
 export function Dashboard() {
@@ -99,6 +109,10 @@ export function Dashboard() {
     [artifacts],
   )
 
+  // Shadow / unaccounted extensions (B3): installed but never declared in the
+  // lockfile or any known registry.
+  const shadows = useMemo(() => artifacts.filter((a) => a.shadow), [artifacts])
+
   const driftedCount = drift.drifted + drift.unsigned
 
   return (
@@ -137,6 +151,25 @@ export function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* Shadow / unaccounted extensions banner (B3) */}
+      {shadows.length > 0 && (
+        <div className="mt-4 flex items-start gap-3 rounded-lg border border-sev-high/40 bg-sev-high/10 px-4 py-3">
+          <EyeOff className="mt-0.5 h-5 w-5 shrink-0 text-sev-high" />
+          <div className="text-sm">
+            <p className="font-medium text-sev-high">
+              {shadows.length} unaccounted extension{shadows.length > 1 ? "s" : ""}
+            </p>
+            <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+              {shadows.map((a) => a.name).join(", ")} — installed but not in your lockfile or any known
+              registry. Approve to account for them, or quarantine.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Posture trend (E2) */}
+      <TrendSparkline />
 
       {/* Summary stats */}
       <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -199,6 +232,7 @@ export function Dashboard() {
         )}
         {tab === "findings" && <FindingsPanel findings={findings} />}
         {tab === "drift" && <DriftPanel drifted={driftedArtifacts} updated={updatedArtifacts} />}
+        {tab === "policy" && <PolicyPanel live={live} />}
       </div>
 
       <ArtifactDrawer
@@ -543,6 +577,218 @@ function ChangesPanel({
       ))}
     </div>
   )
+}
+
+/* ----------------------------- Posture trend (E2) ----------------------------- */
+
+interface PosturePoint {
+  at: string
+  total: number
+  trusted: number
+  review: number
+  quarantine: number
+  drifted: number
+}
+
+function TrendSparkline() {
+  const [points, setPoints] = useState<PosturePoint[] | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/history")
+      .then((r) => (r.ok ? r.json() : { history: [] }))
+      .then((d: { history?: PosturePoint[] }) => !cancelled && setPoints(d.history ?? []))
+      .catch(() => !cancelled && setPoints([]))
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // A trend needs at least two data points to be meaningful.
+  if (!points || points.length < 2) return null
+
+  const pct = points.map((p) => (p.total > 0 ? Math.round((p.trusted / p.total) * 100) : 100))
+  const w = 220
+  const h = 36
+  const step = w / (pct.length - 1)
+  const path = pct
+    .map((v, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(1)} ${(h - (v / 100) * h).toFixed(1)}`)
+    .join(" ")
+  const last = pct[pct.length - 1]
+
+  return (
+    <div className="mt-4 flex items-center gap-4 rounded-lg border border-border bg-card px-4 py-3">
+      <div className="shrink-0">
+        <p className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">Trusted % trend</p>
+        <p className="font-mono text-lg text-foreground">{last}%</p>
+      </div>
+      <svg width={w} height={h} className="text-primary" role="img" aria-label="trusted percentage over time">
+        <path d={path} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinejoin="round" />
+      </svg>
+      <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+        {points.length} snapshots
+      </span>
+    </div>
+  )
+}
+
+/* ----------------------------- Policy (C3) ----------------------------- */
+
+const EMPTY_LISTS: PolicyLists = { allowPublishers: [], blockPublishers: [], blockArtifacts: [] }
+
+function PolicyPanel({ live }: { live: boolean }) {
+  const [lists, setLists] = useState<PolicyLists | null>(null)
+  const [mutes, setMutes] = useState<PolicyMute[]>([])
+  const [writable, setWritable] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetchPolicy()
+      .then((p) => {
+        if (cancelled) return
+        setLists({
+          allowPublishers: p.allowPublishers,
+          blockPublishers: p.blockPublishers,
+          blockArtifacts: p.blockArtifacts,
+        })
+        setMutes(p.mutes)
+      })
+      .catch(() => !cancelled && setLists(EMPTY_LISTS))
+    isPolicyWritable().then((w) => !cancelled && setWritable(w))
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (!live) {
+    return (
+      <div className="rounded-lg border border-border bg-card p-10 text-center">
+        <p className="font-mono text-sm text-muted-foreground">Policy editing needs a live backend</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Run <span className="font-mono">assay dashboard</span> to edit the committed{" "}
+          <span className="font-mono">assay.policy.json</span>.
+        </p>
+      </div>
+    )
+  }
+  if (!lists) return <p className="text-sm text-muted-foreground">Loading policy…</p>
+
+  const save = () => {
+    setSaving(true)
+    setMsg(null)
+    savePolicy(lists)
+      .then(() => setMsg("saved to assay.policy.json"))
+      .catch((e) => setMsg(String(e instanceof Error ? e.message : e)))
+      .finally(() => setSaving(false))
+  }
+
+  const update = (key: keyof PolicyLists, text: string) =>
+    setLists((cur) => ({ ...(cur ?? EMPTY_LISTS), [key]: splitLines(text) }))
+
+  return (
+    <div className="flex flex-col gap-5">
+      <p className="text-sm text-muted-foreground">
+        One entry per line. Publisher rules match against an artifact&rsquo;s source ref (a domain or
+        org); artifact rules match the name. These gate <span className="font-mono">verify --ci</span>{" "}
+        and are committed to <span className="font-mono">assay.policy.json</span> for the whole team.
+      </p>
+      <PolicyList
+        label="Allowed publishers (allowlist — if set, everything else fails)"
+        value={lists.allowPublishers}
+        onChange={(t) => update("allowPublishers", t)}
+        disabled={!writable}
+      />
+      <PolicyList
+        label="Blocked publishers"
+        value={lists.blockPublishers}
+        onChange={(t) => update("blockPublishers", t)}
+        disabled={!writable}
+      />
+      <PolicyList
+        label="Blocked artifacts"
+        value={lists.blockArtifacts}
+        onChange={(t) => update("blockArtifacts", t)}
+        disabled={!writable}
+      />
+
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={save}
+          disabled={!writable || saving}
+          className="inline-flex items-center justify-center rounded-md border border-primary/50 px-4 py-1.5 font-mono text-xs text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
+        >
+          {saving ? "saving…" : "Save policy"}
+        </button>
+        {!writable ? (
+          <span className="font-mono text-[11px] text-muted-foreground">read-only (no write token)</span>
+        ) : null}
+        {msg ? <span className="font-mono text-[11px] text-muted-foreground">{msg}</span> : null}
+      </div>
+
+      <div>
+        <p className="mb-2 font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
+          Muted findings — {mutes.length}
+        </p>
+        {mutes.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No muted findings. Mute one from its security finding to suppress it with a rationale.
+          </p>
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-border">
+            {mutes.map((m, i) => (
+              <div
+                key={`${m.rule}-${i}`}
+                className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border/60 px-4 py-2 font-mono text-[11px] last:border-0"
+              >
+                <span className="text-foreground line-through">{m.rule}</span>
+                <span className="text-muted-foreground">
+                  {m.reason || "—"}
+                  {m.by ? ` · by ${m.by}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function PolicyList({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string
+  value: string[]
+  onChange: (text: string) => void
+  disabled: boolean
+}) {
+  return (
+    <div>
+      <label className="mb-1.5 block font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
+        {label}
+      </label>
+      <textarea
+        value={value.join("\n")}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        rows={Math.max(2, value.length + 1)}
+        placeholder="one per line…"
+        className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+      />
+    </div>
+  )
+}
+
+function splitLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
 }
 
 /* ----------------------------- Activity ----------------------------- */

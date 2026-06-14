@@ -1,24 +1,27 @@
 "use client"
 
 // Client helpers for the dashboard's write actions (approve / quarantine /
-// freeze). Each POST carries the X-Assay-Token header; the token is fetched
-// once from the same-origin /api/token endpoint, which a cross-origin page
-// cannot read. In demo mode (no backend) the fetch fails and actions are hidden.
+// freeze, plus the policy editor, finding mute, and egress allowlist). Each POST
+// carries the X-Assay-Token header; the token is fetched once from the
+// same-origin /api/token endpoint, which a cross-origin page cannot read. In
+// demo mode (no backend) the fetch fails and the write affordances are hidden.
 
 let tokenCache: string | null = null
 let writableCache = false
+let policyWritableCache = false
 
 async function getToken(): Promise<string> {
   if (tokenCache !== null) return tokenCache
   const r = await fetch("/api/token")
   if (!r.ok) throw new Error("write token unavailable")
-  const d = (await r.json()) as { token: string; writable: boolean }
+  const d = (await r.json()) as { token: string; writable: boolean; policyWritable?: boolean }
   tokenCache = d.token
   writableCache = d.writable
+  policyWritableCache = d.policyWritable ?? false
   return tokenCache
 }
 
-/** isWritable reports whether the backend exposes the write endpoints. */
+/** isWritable reports whether the backend exposes the lockfile write endpoints. */
 export async function isWritable(): Promise<boolean> {
   try {
     await getToken()
@@ -28,17 +31,71 @@ export async function isWritable(): Promise<boolean> {
   }
 }
 
-export type ActionKind = "approve" | "quarantine" | "freeze"
+/** isPolicyWritable reports whether the backend can edit the policy file. */
+export async function isPolicyWritable(): Promise<boolean> {
+  try {
+    await getToken()
+    return policyWritableCache
+  } catch {
+    return false
+  }
+}
 
-/** runAction POSTs a write to the backend; throws on any non-2xx response. */
-export async function runAction(kind: ActionKind, id: string, on: boolean): Promise<void> {
+async function postJSON(path: string, body: unknown): Promise<void> {
   const token = await getToken()
-  const r = await fetch(`/api/${kind}`, {
+  const r = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Assay-Token": token },
-    body: JSON.stringify({ id, on }),
+    body: JSON.stringify(body),
   })
   if (!r.ok) {
-    throw new Error(`${kind} failed: ${(await r.text()).trim() || r.status}`)
+    throw new Error(`${path} failed: ${(await r.text()).trim() || r.status}`)
   }
+}
+
+export type ActionKind = "approve" | "quarantine" | "freeze"
+
+/** runAction POSTs a lockfile write to the backend; throws on any non-2xx. */
+export function runAction(kind: ActionKind, id: string, on: boolean): Promise<void> {
+  return postJSON(`/api/${kind}`, { id, on })
+}
+
+export interface PolicyLists {
+  allowPublishers: string[]
+  blockPublishers: string[]
+  blockArtifacts: string[]
+}
+
+export interface PolicyMute {
+  rule: string
+  reason?: string
+  by?: string
+}
+
+/** fetchPolicy reads the committed policy's editable lists and mutes. */
+export async function fetchPolicy(): Promise<PolicyLists & { mutes: PolicyMute[] }> {
+  const r = await fetch("/api/policy")
+  if (!r.ok) throw new Error("policy unavailable")
+  const d = (await r.json()) as Partial<PolicyLists> & { mutes?: PolicyMute[] }
+  return {
+    allowPublishers: d.allowPublishers ?? [],
+    blockPublishers: d.blockPublishers ?? [],
+    blockArtifacts: d.blockArtifacts ?? [],
+    mutes: d.mutes ?? [],
+  }
+}
+
+/** savePolicy replaces the policy's allow/block lists (C3). */
+export function savePolicy(lists: PolicyLists): Promise<void> {
+  return postJSON("/api/policy", lists)
+}
+
+/** muteFinding suppresses a rule with a recorded rationale (C4). */
+export function muteFinding(rule: string, reason: string): Promise<void> {
+  return postJSON("/api/mute", { rule, reason })
+}
+
+/** allowEgress adds a host to a server's egress allowlist (D2). */
+export function allowEgress(server: string, host: string): Promise<void> {
+  return postJSON("/api/egress-allow", { server, host })
 }

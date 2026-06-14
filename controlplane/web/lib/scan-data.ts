@@ -111,6 +111,10 @@ export interface Artifact {
   quarantined?: boolean
   frozen?: boolean
   provenance?: ProvenanceLadder
+
+  // Shadow / unaccounted extension (B3): installed but not in the lockfile and
+  // not from a known registry/package source.
+  shadow?: boolean
 }
 
 export const SEVERITY_ORDER: Record<Severity, number> = {

@@ -1,11 +1,11 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { X, FileCode2, ShieldCheck, ShieldAlert, Network, FolderTree, Terminal } from "lucide-react"
+import { X, FileCode2, ShieldCheck, ShieldAlert, Network, FolderTree, Terminal, EyeOff } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { KIND_LABELS, PATTERN_LABELS, type Artifact } from "@/lib/scan-data"
 import { SeverityBadge, DriftBadge, VerdictBadge } from "@/components/dashboard/badges"
-import { runAction, type ActionKind } from "@/lib/actions"
+import { runAction, muteFinding, allowEgress, type ActionKind } from "@/lib/actions"
 
 interface AuditEvent {
   ts: string
@@ -91,6 +91,11 @@ function DrawerBody({
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {a.shadow ? (
+            <span className="inline-flex items-center gap-1 rounded-md border border-sev-high/40 bg-sev-high/10 px-2 py-0.5 font-mono text-[11px] text-sev-high">
+              <EyeOff className="h-3 w-3" /> unaccounted
+            </span>
+          ) : null}
           <DriftBadge status={a.drift} />
           <button
             onClick={onClose}
@@ -109,9 +114,9 @@ function DrawerBody({
         <Provenance a={a} />
         <Integrity a={a} />
         <Capabilities a={a} />
-        <Findings a={a} />
+        <Findings a={a} live={live} onChanged={onChanged} />
         <FileManifest a={a} />
-        {a.kind === "mcp" && <Activity name={a.name} />}
+        {a.kind === "mcp" && <Activity name={a.name} live={live} />}
       </div>
     </>
   )
@@ -355,7 +360,7 @@ function Capabilities({ a }: { a: Artifact }) {
   )
 }
 
-function Findings({ a }: { a: Artifact }) {
+function Findings({ a, live, onChanged }: { a: Artifact; live: boolean; onChanged?: () => void }) {
   if (a.findings.length === 0) {
     return (
       <Section title="Findings">
@@ -383,10 +388,76 @@ function Findings({ a }: { a: Artifact }) {
               {f.location ? ` · ${f.location}` : ""}
               {f.owasp ? ` · ${f.owasp}` : ""}
             </p>
+            {live && f.ruleId ? <MuteControl ruleId={f.ruleId} onChanged={onChanged} /> : null}
           </div>
         ))}
       </div>
     </Section>
+  )
+}
+
+// MuteControl suppresses a finding rule with a required rationale (C4). Muting is
+// recorded in the committed policy, so it stays auditable in the diff.
+function MuteControl({ ruleId, onChanged }: { ruleId: string; onChanged?: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [reason, setReason] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = () => {
+    if (reason.trim() === "") {
+      setError("a rationale is required")
+      return
+    }
+    setBusy(true)
+    setError(null)
+    muteFinding(ruleId, reason.trim())
+      .then(() => {
+        setOpen(false)
+        onChanged?.()
+      })
+      .catch((e) => setError(String(e instanceof Error ? e.message : e)))
+      .finally(() => setBusy(false))
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-2 font-mono text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+      >
+        Mute {ruleId}
+      </button>
+    )
+  }
+  return (
+    <div className="mt-2 flex flex-col gap-1.5">
+      <input
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder={`why is ${ruleId} an accepted false positive?`}
+        className="w-full rounded-md border border-border bg-card px-2 py-1 font-mono text-[11px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={submit}
+          className="rounded-md border border-border px-2 py-0.5 font-mono text-[11px] text-foreground transition-colors hover:bg-muted/40 disabled:opacity-50"
+        >
+          {busy ? "…" : "Confirm mute"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="font-mono text-[11px] text-muted-foreground hover:text-foreground"
+        >
+          cancel
+        </button>
+        {error ? <span className="font-mono text-[11px] text-sev-critical">{error}</span> : null}
+      </div>
+    </div>
   )
 }
 
@@ -412,8 +483,9 @@ function FileManifest({ a }: { a: Artifact }) {
   )
 }
 
-function Activity({ name }: { name: string }) {
+function Activity({ name, live }: { name: string; live: boolean }) {
   const [events, setEvents] = useState<AuditEvent[] | null>(null)
+  const [reload, setReload] = useState(0)
   useEffect(() => {
     let cancelled = false
     fetch(`/api/audit?server=${encodeURIComponent(name)}`)
@@ -423,10 +495,17 @@ function Activity({ name }: { name: string }) {
     return () => {
       cancelled = true
     }
-  }, [name])
+  }, [name, reload])
+
+  const egressHosts = Array.from(
+    new Set((events ?? []).filter((e) => e.kind === "egress" && e.host).map((e) => e.host as string)),
+  )
 
   return (
     <Section title="Runtime activity">
+      {live && egressHosts.length > 0 ? (
+        <EgressAllowlist server={name} hosts={egressHosts} onChanged={() => setReload((n) => n + 1)} />
+      ) : null}
       {events === null ? (
         <p className="text-xs text-muted-foreground">Loading…</p>
       ) : events.length === 0 ? (
@@ -446,5 +525,61 @@ function Activity({ name }: { name: string }) {
         </div>
       )}
     </Section>
+  )
+}
+
+// EgressAllowlist offers one-click "allow this host for this skill" (D2). Each
+// click writes a per-server AllowHosts rule that the egress proxy enforces.
+function EgressAllowlist({
+  server,
+  hosts,
+  onChanged,
+}: {
+  server: string
+  hosts: string[]
+  onChanged?: () => void
+}) {
+  const [busy, setBusy] = useState<string | null>(null)
+  const [done, setDone] = useState<Set<string>>(new Set())
+  const [error, setError] = useState<string | null>(null)
+
+  const allow = (host: string) => {
+    setBusy(host)
+    setError(null)
+    allowEgress(server, host)
+      .then(() => {
+        setDone((d) => new Set(d).add(host))
+        onChanged?.()
+      })
+      .catch((e) => setError(String(e instanceof Error ? e.message : e)))
+      .finally(() => setBusy(null))
+  }
+
+  return (
+    <div className="mb-3 rounded-md border border-border bg-background p-2.5">
+      <p className="mb-1.5 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+        <Network className="h-3 w-3" /> Egress allowlist
+      </p>
+      <div className="flex flex-col gap-1">
+        {hosts.map((h) => (
+          <div key={h} className="flex items-baseline justify-between gap-3 font-mono text-[11px]">
+            <span className="truncate text-foreground">{h}</span>
+            {done.has(h) ? (
+              <span className="shrink-0 text-ok">allowed</span>
+            ) : (
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => allow(h)}
+                className="shrink-0 rounded border border-border px-2 py-0.5 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+              >
+                {busy === h ? "…" : "Allow"}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      {error ? <p className="mt-1.5 text-[11px] text-sev-critical">{error}</p> : null}
+    </div>
   )
 }
