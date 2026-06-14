@@ -14,11 +14,16 @@ export function ThemeToggle() {
 
   const isDark = resolvedTheme === "dark"
 
+  // Until mounted, resolvedTheme is unknown (the server can't read the client's
+  // theme), so keep every theme-dependent attribute stable to match the SSR
+  // HTML — otherwise aria-label/icon hydrate to different values and React warns.
+  const label = !mounted ? "Toggle theme" : isDark ? "Switch to light mode" : "Switch to dark mode"
+
   return (
     <button
       type="button"
       onClick={() => setTheme(isDark ? "light" : "dark")}
-      aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      aria-label={label}
       className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:text-foreground hover:bg-secondary"
     >
       {mounted ? (
