@@ -62,6 +62,8 @@ func (a *App) Execute(ctx context.Context, args []string) int {
 		return a.runDiff(ctx, rest)
 	case "digest":
 		return a.runDigest(ctx, rest)
+	case "sbom":
+		return a.runSBOM(ctx, rest)
 	case "list":
 		return a.runList(ctx, rest)
 	case "approve":
@@ -108,6 +110,7 @@ Commands:
   verify    Recompute and diff against the lockfile (rug-pull detector)
   diff      Show what changed since the last lockfile (informational)
   digest    Summarize what changed since the lockfile (what to review)
+  sbom      Export the lockfile as a CycloneDX SBOM (--o file)
   list      Print the current inventory across tools
   approve   Mark artifact(s) as approved in the lockfile
   quarantine Disable artifact(s) pending review (--remove to lift)

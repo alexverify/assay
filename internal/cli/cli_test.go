@@ -293,3 +293,34 @@ func TestDigestNotifyPostsToWebhook(t *testing.T) {
 		t.Fatalf("stdout should confirm the send, got:\n%s", out.String())
 	}
 }
+
+func TestSBOMEmitsCycloneDX(t *testing.T) {
+	ctx := context.Background()
+	dir, lock := fixtureProject(t)
+
+	app, _, errBuf := newApp()
+	if code := app.Execute(ctx, []string{"scan", "--path", dir, "--lockfile", lock}); code != cli.ExitOK {
+		t.Fatalf("scan exit = %d, stderr=%s", code, errBuf.String())
+	}
+
+	app2, out2, _ := newApp()
+	if code := app2.Execute(ctx, []string{"sbom", "--lockfile", lock}); code != cli.ExitOK {
+		t.Fatalf("sbom exit = %d", code)
+	}
+	var bom struct {
+		BOMFormat   string `json:"bomFormat"`
+		SpecVersion string `json:"specVersion"`
+		Components  []struct {
+			Name string `json:"name"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(out2.Bytes(), &bom); err != nil {
+		t.Fatalf("sbom output is not valid JSON: %v\n%s", err, out2.String())
+	}
+	if bom.BOMFormat != "CycloneDX" || bom.SpecVersion != "1.6" {
+		t.Fatalf("bom header = %+v", bom)
+	}
+	if len(bom.Components) != 1 || bom.Components[0].Name != "local-tool" {
+		t.Fatalf("components = %+v", bom.Components)
+	}
+}

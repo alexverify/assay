@@ -2,15 +2,19 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"os/user"
 	"strings"
+	"time"
 
 	"github.com/alexverify/agentguard/internal/adapters/lockstore"
 	"github.com/alexverify/agentguard/internal/adapters/notify"
 	"github.com/alexverify/agentguard/internal/adapters/policystore"
+	"github.com/alexverify/agentguard/internal/adapters/sbom"
 	"github.com/alexverify/agentguard/internal/adapters/sign"
 	"github.com/alexverify/agentguard/internal/app/ports"
 	"github.com/alexverify/agentguard/internal/app/scan"
@@ -233,6 +237,44 @@ func digestSummary(locked, current lockfile.Lockfile) string {
 		fmt.Fprintf(&b, "  [%s] %s\n", ch.label, ch.name)
 	}
 	return b.String()
+}
+
+// runSBOM exports the committed lockfile as a CycloneDX 1.6 SBOM — components
+// for every artifact plus findings rendered as vulnerabilities — to stdout or a
+// file. It is the auditable supply-chain document a customer might ask for.
+func (a *App) runSBOM(ctx context.Context, args []string) int {
+	fs := a.flagSet("sbom")
+	lock := fs.String("lockfile", "agentlock.json", "lockfile to export")
+	outPath := fs.String("o", "", "write to this file instead of stdout")
+	if err := fs.Parse(args); err != nil {
+		return ExitUsage
+	}
+	lf, err := lockstore.New().Read(ctx, *lock)
+	if err != nil {
+		if errors.Is(err, ports.ErrNoLockfile) {
+			fmt.Fprintln(a.Stderr, "sbom: no lockfile found; run 'agentguard scan' first")
+			return ExitError
+		}
+		fmt.Fprintf(a.Stderr, "sbom: %v\n", err)
+		return ExitError
+	}
+	bom := sbom.Build(lf, a.Clock.Now().UTC().Format(time.RFC3339))
+	b, err := json.MarshalIndent(bom, "", "  ")
+	if err != nil {
+		fmt.Fprintf(a.Stderr, "sbom: %v\n", err)
+		return ExitError
+	}
+	b = append(b, '\n')
+	if *outPath != "" {
+		if err := os.WriteFile(*outPath, b, 0o644); err != nil {
+			fmt.Fprintf(a.Stderr, "sbom: %v\n", err)
+			return ExitError
+		}
+		fmt.Fprintf(a.Stdout, "wrote %s (%d component(s))\n", *outPath, len(bom.Components))
+		return ExitOK
+	}
+	_, _ = a.Stdout.Write(b)
+	return ExitOK
 }
 
 func (a *App) runList(ctx context.Context, args []string) int {
