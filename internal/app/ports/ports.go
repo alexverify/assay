@@ -62,6 +62,7 @@ type Resolution struct {
 	PinnedRef   string            // concrete resolved ref (exact version / commit SHA)
 	Integrity   string            // upstream-attested integrity (e.g. npm sha512-…)
 	CertSPKI    string            // TLS SPKI pin for remote (url) sources
+	Provenance  string            // upstream build-provenance attestation (e.g. SLSA predicate type), if any
 	LocalPath   string            // non-empty => a directory to hash and analyze
 	ContentHash string            // non-empty => already content-addressed; skip hashing
 	Warnings    []finding.Finding // resolution-time findings (e.g. unpinned @latest)

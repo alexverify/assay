@@ -26,6 +26,32 @@ func npmRunner() *run.Fake {
 	}}
 }
 
+func TestNPMResolveCapturesProvenance(t *testing.T) {
+	r := npmRunner()
+	r.Responses["npm view some-mcp@1.4.2 dist.attestations.provenance.predicateType --json"] =
+		run.FakeResponse{Out: []byte(`"https://slsa.dev/provenance/v1"`)}
+	n := NPM{Runner: r, Fetcher: stubFetcher{dir: "/tmp/extracted"}}
+	res, err := n.Resolve(context.Background(), artifact.Source{Kind: artifact.SourceNPM, Ref: "some-mcp@1.4.2"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Provenance != "https://slsa.dev/provenance/v1" {
+		t.Fatalf("Provenance = %q, want the SLSA predicate type", res.Provenance)
+	}
+}
+
+func TestNPMResolveNoProvenanceWhenAbsent(t *testing.T) {
+	// npmRunner() has no attestations response → the lookup errors and degrades.
+	n := NPM{Runner: npmRunner(), Fetcher: stubFetcher{dir: "/tmp/x"}}
+	res, err := n.Resolve(context.Background(), artifact.Source{Kind: artifact.SourceNPM, Ref: "some-mcp@1.4.2"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Provenance != "" {
+		t.Errorf("Provenance should be empty when the package has no attestation, got %q", res.Provenance)
+	}
+}
+
 func TestNPMResolvePinsExactVersionAndIntegrity(t *testing.T) {
 	n := NPM{Runner: npmRunner(), Fetcher: stubFetcher{dir: "/tmp/extracted"}}
 	res, err := n.Resolve(context.Background(), artifact.Source{Kind: artifact.SourceNPM, Ref: "some-mcp@1.4.2"})

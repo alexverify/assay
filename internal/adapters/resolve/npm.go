@@ -68,7 +68,17 @@ func (n NPM) Resolve(ctx context.Context, src artifact.Source) (ports.Resolution
 		integrity = parseNPMStringOutput(iout)
 	}
 
-	res := ports.Resolution{PinnedRef: pinnedSpec, Integrity: integrity, Warnings: warnings}
+	// Build provenance: packages published with `npm publish --provenance` carry
+	// a Sigstore attestation whose predicate type the registry exposes. Its
+	// presence is the "publisher verified" signal on the provenance ladder. The
+	// lookup is best-effort — an old npm, a private registry, or a package
+	// without provenance simply leaves this empty.
+	provenance := ""
+	if pout, perr := n.Runner.Run(ctx, "npm", "view", pinnedSpec, "dist.attestations.provenance.predicateType", "--json"); perr == nil {
+		provenance = parseNPMStringOutput(pout)
+	}
+
+	res := ports.Resolution{PinnedRef: pinnedSpec, Integrity: integrity, Provenance: provenance, Warnings: warnings}
 
 	dir, ferr := n.Fetcher.fetch(ctx, pinnedSpec)
 	if ferr != nil {

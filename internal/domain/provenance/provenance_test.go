@@ -39,3 +39,17 @@ func TestAssessLocalSourceIsAnchored(t *testing.T) {
 		t.Fatalf("local pinned+anchored, unsigned → level 2, got %d (%+v)", l.Level, l.Rungs)
 	}
 }
+
+func TestAssessVerifiedPublisherReachesLevel4(t *testing.T) {
+	l := Assess(artifact.Source{
+		Kind: artifact.SourceNPM, Ref: "1.2.3", Integrity: "sha512-A",
+		Provenance: "https://slsa.dev/provenance/v1",
+	}, true)
+	// pinned ✓ integrity ✓ signed ✓ publisher ✓ → top of the ladder
+	if l.Level != 4 {
+		t.Fatalf("attested + signed npm → level 4, got %d (%+v)", l.Level, l.Rungs)
+	}
+	if !l.Rungs[3].OK {
+		t.Errorf("publisher-verified rung should be satisfied when Source.Provenance is set")
+	}
+}

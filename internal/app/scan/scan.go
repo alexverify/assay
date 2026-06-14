@@ -130,6 +130,9 @@ func (s *Service) enrich(ctx context.Context, a *artifact.Artifact) error {
 	if res.CertSPKI != "" {
 		a.Source.CertSPKI = res.CertSPKI
 	}
+	if res.Provenance != "" {
+		a.Source.Provenance = res.Provenance
+	}
 	a.Findings = append(a.Findings, res.Warnings...)
 
 	switch {

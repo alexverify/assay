@@ -3,9 +3,9 @@
 // pins agentguard already records (ref, integrity, cert) plus whether a trusted
 // key signed the approval, and reports a ladder of rungs.
 //
-// The top rung — publisher verification against a registry — is a network
-// check not yet implemented, so it is reported as not-yet-met rather than
-// silently passed. A broken or absent rung is information, not a failure.
+// The top rung — publisher verification — reflects an upstream build-provenance
+// attestation captured at scan time (e.g. npm Sigstore provenance, recorded on
+// Source.Provenance). A broken or absent rung is information, not a failure.
 package provenance
 
 import "github.com/alexverify/agentguard/internal/domain/artifact"
@@ -31,7 +31,7 @@ func Assess(s artifact.Source, signed bool) Ladder {
 		{Label: "source pinned", OK: s.Ref != ""},
 		{Label: "integrity anchored", OK: anchored(s)},
 		{Label: "signed by a trusted key", OK: signed},
-		{Label: "publisher verified", OK: false}, // registry check not yet implemented
+		{Label: "publisher verified", OK: s.Provenance != ""}, // upstream build-provenance attestation
 	}
 	level := 0
 	for _, r := range rungs {

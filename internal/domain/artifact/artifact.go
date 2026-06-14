@@ -43,13 +43,14 @@ const (
 // Source captures the declaration of where an artifact comes from, plus the
 // integrity anchors the resolver fills in.
 type Source struct {
-	Kind      SourceKind        `json:"kind"`
-	Ref       string            `json:"ref,omitempty"`       // "pkg@1.2.3" | "git+https://…#sha" | URL | abs path
-	Integrity string            `json:"integrity,omitempty"` // npm integrity (sha512-…) when available
-	CertSPKI  string            `json:"certSpki,omitempty"`  // SPKI pin for remote (url) sources
-	Command   string            `json:"command,omitempty"`   // for MCP servers: the spawn command
-	Args      []string          `json:"args,omitempty"`
-	Env       map[string]string `json:"env,omitempty"` // env keys that look like secrets are flagged, not stored verbatim
+	Kind       SourceKind        `json:"kind"`
+	Ref        string            `json:"ref,omitempty"`        // "pkg@1.2.3" | "git+https://…#sha" | URL | abs path
+	Integrity  string            `json:"integrity,omitempty"`  // npm integrity (sha512-…) when available
+	CertSPKI   string            `json:"certSpki,omitempty"`   // SPKI pin for remote (url) sources
+	Provenance string            `json:"provenance,omitempty"` // upstream build-provenance attestation (SLSA predicate type), if any
+	Command    string            `json:"command,omitempty"`    // for MCP servers: the spawn command
+	Args       []string          `json:"args,omitempty"`
+	Env        map[string]string `json:"env,omitempty"` // env keys that look like secrets are flagged, not stored verbatim
 }
 
 // Capabilities are the declared (config-stated) powers of an artifact. They
