@@ -173,4 +173,4 @@ Requires Go 1.25+. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[Apache-2.0](LICENSE).
+[MIT](LICENSE).

@@ -51,4 +51,4 @@ The cleanest seams to fill (each is a localized change):
 - Write focused commits with clear messages.
 - PRs should describe the change, the reasoning, and how it was tested.
 - By contributing you agree your work is licensed under
-  [Apache-2.0](LICENSE).
+  [MIT](LICENSE).
