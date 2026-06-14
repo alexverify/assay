@@ -3,8 +3,20 @@
 **A feature map for solo entrepreneurs and small teams who build with AI agents.**
 
 *Status: research + design proposal, June 2026. Not a commitment — a prioritized menu with
-evidence, dashboard mockups, and implementation seams. Nothing here is built yet unless the
-"Status" line says so.*
+evidence, dashboard mockups, and implementation seams.*
+
+> **Implementation update (June 2026): all 17 features are now built.** The last gaps to close were:
+> **B1** — git signed-commit verification (`git verify-commit`) and cosign container verification, each
+> setting `Source.Provenance` to satisfy the ladder's top rung, degrading cleanly when the tool or
+> object is absent (`internal/adapters/resolve`); **B3** — shadow / unaccounted-extension detection
+> (new + locally-defined → `DashArtifact.Shadow`, surfaced as a dashboard banner and drawer badge);
+> **C3** — a Policy tab editing `allowPublishers`/`blockPublishers`/`blockArtifacts` via a token-guarded
+> `POST /api/policy` that writes the committed `assay.policy.json` (`policystore.Save`); **C4** — per-finding
+> "mute with rationale" (`policy.Mute`, `POST /api/mute`); **D2** — one-click per-skill egress allowlist
+> editing (`POST /api/egress-allow`, writing the per-server `AllowHosts` the proxy already enforces);
+> **E2** — a counts-only posture history (`~/.assay/history.jsonl`), a dashboard "trusted %" trend
+> sparkline (`GET /api/history`), and a single-line first-run verdict printed after `assay scan`. All
+> shipped with tests and verified end-to-end through the real binary.
 
 ---
 
