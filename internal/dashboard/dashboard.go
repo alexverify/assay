@@ -27,6 +27,7 @@ import (
 	"github.com/alexverify/assay/internal/domain/lockfile"
 	"github.com/alexverify/assay/internal/domain/policy"
 	"github.com/alexverify/assay/internal/domain/posture"
+	"github.com/alexverify/assay/internal/domain/reputation"
 	"github.com/alexverify/assay/internal/domain/usage"
 )
 
@@ -67,6 +68,9 @@ type Deps struct {
 	// Conformance returns the fleet's policy-compliance rollup (G3): which
 	// machines run blocked/unapproved artifacts. Optional: nil → empty.
 	Conformance func(context.Context) (fleet.Conformance, error)
+	// Reputation loads the opt-in community trust corpus (H3), keyed by content
+	// hash. Optional: when nil, no reputation signal is shown.
+	Reputation func() (reputation.Source, error)
 	// Static overrides the embedded UI assets (used in tests); nil uses the
 	// embedded Next.js export.
 	Static fs.FS
@@ -168,7 +172,21 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, struct {
 		Artifacts []DashArtifact `json:"artifacts"`
-	}{Artifacts: BuildScan(current, locked, s.approvedSet(locked), s.usageSummary())})
+	}{Artifacts: BuildScan(current, locked, s.approvedSet(locked), s.usageSummary(), s.reputationSource())})
+}
+
+// reputationSource loads the opt-in community reputation corpus (H3). A nil dep
+// or a load error yields an empty corpus — the signal is supplementary, so it
+// must never fail the scan view; a miss simply shows no reputation.
+func (s *Server) reputationSource() reputation.Source {
+	if s.deps.Reputation == nil {
+		return nil
+	}
+	src, err := s.deps.Reputation()
+	if err != nil {
+		return nil
+	}
+	return src
 }
 
 // usageSummary reads the runtime audit log and folds it into per-artifact

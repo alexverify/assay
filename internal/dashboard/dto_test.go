@@ -7,8 +7,39 @@ import (
 	"github.com/alexverify/assay/internal/domain/artifact"
 	"github.com/alexverify/assay/internal/domain/finding"
 	"github.com/alexverify/assay/internal/domain/lockfile"
+	"github.com/alexverify/assay/internal/domain/reputation"
 	"github.com/alexverify/assay/internal/domain/usage"
 )
+
+func TestBuildScanReputationJoinByHash(t *testing.T) {
+	a := art("a1", "claude-code", artifact.TypeMCPServer, "trusted-srv", "SHA256-AbC")
+	rep := reputation.Source{
+		"sha256-abc": {Hash: "sha256-abc", Trusters: 42, FirstSeen: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)},
+	}
+	got := find(t, BuildScan(lf(a), lockfile.Lockfile{}, nil, nil, rep), "trusted-srv")
+	if got.Reputation == nil {
+		t.Fatalf("a hash present in the corpus should carry a reputation signal")
+	}
+	if got.Reputation.Trusters != 42 || got.Reputation.Grade != "established" {
+		t.Errorf("reputation = %+v", got.Reputation)
+	}
+	if got.Reputation.FirstSeen != "2026-04-01" {
+		t.Errorf("firstSeen = %q, want 2026-04-01", got.Reputation.FirstSeen)
+	}
+}
+
+func TestBuildScanNoReputationOnMissOrEmptyCorpus(t *testing.T) {
+	a := art("a1", "claude-code", artifact.TypeSkill, "unknown-skill", "sha256-zzz")
+	// Miss: corpus has other hashes but not this one → nil, never negative.
+	rep := reputation.Source{"sha256-other": {Trusters: 5}}
+	if find(t, BuildScan(lf(a), lockfile.Lockfile{}, nil, nil, rep), "unknown-skill").Reputation != nil {
+		t.Errorf("a corpus miss must yield no reputation signal")
+	}
+	// Empty/absent corpus → silent no-op.
+	if find(t, BuildScan(lf(a), lockfile.Lockfile{}, nil, nil, nil), "unknown-skill").Reputation != nil {
+		t.Errorf("an absent corpus must be a silent no-op")
+	}
+}
 
 func art(id, tool string, typ artifact.Type, name, hash string) artifact.Artifact {
 	return artifact.Artifact{
@@ -37,7 +68,7 @@ func TestBuildScanMapsKindAndAgent(t *testing.T) {
 		art("a1", "claude-code", artifact.TypeMCPServer, "github", "sha256-x"),
 		art("a2", "windsurf", artifact.TypeSkill, "linter", "sha256-y"),
 	)
-	scan := BuildScan(cur, lockfile.Lockfile{}, nil, nil)
+	scan := BuildScan(cur, lockfile.Lockfile{}, nil, nil, nil)
 
 	gh := find(t, scan, "github")
 	if gh.Kind != "mcp" {
@@ -74,7 +105,7 @@ func TestBuildScanDriftStatuses(t *testing.T) {
 		art("a3", "codex", artifact.TypeSkill, "fresh", "sha256-z"),    // added → new
 	)
 
-	scan := BuildScan(current, lockedEntries, approvedSet(lockedEntries), nil)
+	scan := BuildScan(current, lockedEntries, approvedSet(lockedEntries), nil, nil)
 
 	if s := find(t, scan, "github").Drift; s != "drifted" {
 		t.Errorf("github moved hash → drifted, got %q", s)
@@ -93,7 +124,7 @@ func TestBuildScanVerifiedWhenApprovedAndMatching(t *testing.T) {
 	locked.Artifacts[0].Approval = &lockfile.Approval{Status: "approved", Sig: "ed25519:x"}
 	current := lf(a)
 
-	scan := BuildScan(current, locked, approvedSet(locked), nil)
+	scan := BuildScan(current, locked, approvedSet(locked), nil, nil)
 	if s := find(t, scan, "ok-skill").Drift; s != "verified" {
 		t.Errorf("approved + matching hash → verified, got %q", s)
 	}
@@ -113,7 +144,7 @@ func TestBuildScanLockedHashJoin(t *testing.T) {
 		a.ContentHash = "sha256-CURRENT"
 		return a
 	}()
-	scan := BuildScan(lf(cur), locked, nil, nil)
+	scan := BuildScan(lf(cur), locked, nil, nil, nil)
 	got := find(t, scan, "s")
 	if got.Hash != "sha256-CURRENT" || got.LockedHash != "sha256-LOCKED" {
 		t.Errorf("hash join wrong: hash=%q locked=%q", got.Hash, got.LockedHash)
@@ -127,7 +158,7 @@ func TestBuildScanMapsFindings(t *testing.T) {
 		File: "hooks/postinstall.sh", Line: 4,
 		Snippet: "curl x | sh", Explanation: "pipes a remote script into a shell",
 	}}
-	scan := BuildScan(lf(a), lockfile.Lockfile{}, nil, nil)
+	scan := BuildScan(lf(a), lockfile.Lockfile{}, nil, nil, nil)
 	f := find(t, scan, "evil").Findings
 	if len(f) != 1 {
 		t.Fatalf("got %d findings", len(f))
@@ -145,7 +176,7 @@ func TestBuildScanMapsFindings(t *testing.T) {
 
 func TestBuildScanInstalledAtFallsBackToScanTime(t *testing.T) {
 	cur := lf(art("a1", "claude-code", artifact.TypeSkill, "s", "x"))
-	scan := BuildScan(cur, lockfile.Lockfile{}, nil, nil)
+	scan := BuildScan(cur, lockfile.Lockfile{}, nil, nil, nil)
 	if find(t, scan, "s").InstalledAt == "" {
 		t.Error("installedAt should fall back to the scan timestamp when unknown")
 	}
@@ -154,7 +185,7 @@ func TestBuildScanInstalledAtFallsBackToScanTime(t *testing.T) {
 func TestBuildScanInstalledAtUsesModTime(t *testing.T) {
 	a := art("a1", "claude-code", artifact.TypeSkill, "s", "x")
 	a.ModifiedAt = time.Date(2026, 3, 1, 9, 30, 0, 0, time.UTC)
-	scan := BuildScan(lf(a), lockfile.Lockfile{}, nil, nil)
+	scan := BuildScan(lf(a), lockfile.Lockfile{}, nil, nil, nil)
 	if got := find(t, scan, "s").InstalledAt; got != "2026-03-01 09:30" {
 		t.Errorf("installedAt should use the artifact mtime, got %q", got)
 	}
@@ -172,7 +203,7 @@ func TestBuildScanDetailFields(t *testing.T) {
 	a.Capabilities = artifact.Capabilities{Exec: true, Network: []string{"api.db.example"}}
 	a.Files = []artifact.FileRef{{Path: "server.js", Hash: "deadbeef"}}
 
-	d := find(t, BuildScan(lf(a), lockfile.Lockfile{}, nil, nil), "db")
+	d := find(t, BuildScan(lf(a), lockfile.Lockfile{}, nil, nil, nil), "db")
 
 	if d.Scope != "project:." || d.DiscoveredFrom != ".mcp.json" || d.SourceKind != "npm" {
 		t.Errorf("provenance fields: %+v", d)
@@ -198,7 +229,7 @@ func TestBuildScanApprovalDetail(t *testing.T) {
 	locked.Artifacts[0].Approval = &lockfile.Approval{
 		Status: "approved", By: "alice", At: time.Date(2026, 2, 2, 0, 0, 0, 0, time.UTC), Sig: "ed25519:x",
 	}
-	d := find(t, BuildScan(lf(a), locked, approvedSet(locked), nil), "s")
+	d := find(t, BuildScan(lf(a), locked, approvedSet(locked), nil, nil), "s")
 	if d.Approval == nil || d.Approval.By != "alice" || !d.Approval.Signed {
 		t.Errorf("approval detail: %+v", d.Approval)
 	}
@@ -210,7 +241,7 @@ func TestBuildScanTrustVerdict(t *testing.T) {
 	locked := lf(clean)
 	locked.Artifacts[0].Approval = &lockfile.Approval{Status: "approved", Sig: "ed25519:x"}
 
-	scan := BuildScan(lf(clean), locked, approvedSet(locked), nil)
+	scan := BuildScan(lf(clean), locked, approvedSet(locked), nil, nil)
 	got := find(t, scan, "linter")
 	if got.Verdict != "trusted" || got.Trust != 100 {
 		t.Fatalf("clean signed npm → trusted/100, got %q/%d", got.Verdict, got.Trust)
@@ -231,7 +262,7 @@ func TestBuildScanUpdatedVsMutatedStatus(t *testing.T) {
 	curUpd := art("u1", "cursor", artifact.TypeSkill, "fmt", "sha256-new")
 	curUpd.Source = artifact.Source{Kind: artifact.SourceNPM, Ref: "2.0.0", Integrity: "sha512-B"}
 
-	scan := BuildScan(lf(curMut, curUpd), lf(lockedMut, lockedUpd), nil, nil)
+	scan := BuildScan(lf(curMut, curUpd), lf(lockedMut, lockedUpd), nil, nil, nil)
 	if s := find(t, scan, "db").Drift; s != "drifted" {
 		t.Errorf("same-version content move → drifted, got %q", s)
 	}
@@ -255,7 +286,7 @@ func TestBuildScanUsageJoinsByServerNameForMCP(t *testing.T) {
 			Count:     7,
 		},
 	}
-	got := find(t, BuildScan(current, lockfile.Lockfile{}, nil, used), "weather")
+	got := find(t, BuildScan(current, lockfile.Lockfile{}, nil, used, nil), "weather")
 	if got.Usage == nil {
 		t.Fatalf("MCP server with audit telemetry should carry Usage")
 	}
@@ -273,7 +304,7 @@ func TestBuildScanNoUsageForNonMCPOrUntracked(t *testing.T) {
 		art("m1", "claude-code", artifact.TypeMCPServer, "lonely", "sha256-y"),
 	)
 	used := map[string]usage.Stat{"weather": {Count: 3, LastUsed: time.Unix(2000, 0)}}
-	scan := BuildScan(cur, lockfile.Lockfile{}, nil, used)
+	scan := BuildScan(cur, lockfile.Lockfile{}, nil, used, nil)
 	if find(t, scan, "weather").Usage != nil {
 		t.Errorf("a skill must not inherit an MCP server's telemetry by name")
 	}
@@ -295,7 +326,7 @@ func TestBuildScanSleeperOnDormantDriftThenRun(t *testing.T) {
 	used := map[string]usage.Stat{
 		"db": {FirstUsed: scanAt.Add(-24 * time.Hour), LastUsed: scanAt, Count: 1}, // first run yesterday
 	}
-	got := find(t, BuildScan(current, lf(locked), nil, used), "db")
+	got := find(t, BuildScan(current, lf(locked), nil, used, nil), "db")
 	if got.Sleeper == nil {
 		t.Fatalf("dormant-then-active triple should flag a sleeper")
 	}
@@ -311,7 +342,7 @@ func TestBuildScanNoSleeperWithoutDrift(t *testing.T) {
 	current := lockfile.Build([]artifact.Artifact{cur}, scanAt, "assay/test")
 	used := map[string]usage.Stat{"db": {FirstUsed: scanAt.Add(-24 * time.Hour), Count: 1}}
 	// Locked == current content → no drift → no sleeper even though dormant+used.
-	if got := find(t, BuildScan(current, lf(cur), nil, used), "db"); got.Sleeper != nil {
+	if got := find(t, BuildScan(current, lf(cur), nil, used, nil), "db"); got.Sleeper != nil {
 		t.Errorf("sleeper must not fire without drift: %+v", got.Sleeper)
 	}
 }
@@ -328,7 +359,7 @@ func TestBuildScanTimelineRibbon(t *testing.T) {
 	used := map[string]usage.Stat{
 		"db": {FirstUsed: scanAt.Add(-2 * 24 * time.Hour), LastUsed: scanAt.Add(-1 * time.Hour), Count: 5},
 	}
-	got := find(t, BuildScan(current, lf(locked), nil, used), "db")
+	got := find(t, BuildScan(current, lf(locked), nil, used, nil), "db")
 	if len(got.Timeline) == 0 {
 		t.Fatalf("a drifted, used MCP server should have a timeline ribbon")
 	}
@@ -365,7 +396,7 @@ func TestBuildScanFindingLivenessFusion(t *testing.T) {
 	used := map[string]usage.Stat{
 		"live-srv": {FirstUsed: scanAt.Add(-48 * time.Hour), LastUsed: scanAt.Add(-24 * time.Hour), Count: 3},
 	}
-	scan := BuildScan(current, lockfile.Lockfile{}, nil, used)
+	scan := BuildScan(current, lockfile.Lockfile{}, nil, used, nil)
 
 	lf := find(t, scan, "live-srv").Findings[0]
 	cf := find(t, scan, "cold-srv").Findings[0]
@@ -388,7 +419,7 @@ func TestBuildScanFindingLivenessUnknownForSkill(t *testing.T) {
 	skill.Findings = []finding.Finding{{RuleID: "R1", Severity: finding.SeverityMedium, Explanation: "x"}}
 	current := lockfile.Build([]artifact.Artifact{skill}, scanAt, "assay/test")
 	used := map[string]usage.Stat{"shared": {LastUsed: scanAt, Count: 99}}
-	got := find(t, BuildScan(current, lockfile.Lockfile{}, nil, used), "shared").Findings[0]
+	got := find(t, BuildScan(current, lockfile.Lockfile{}, nil, used, nil), "shared").Findings[0]
 	if got.Liveness != "unknown" {
 		t.Errorf("a skill must not inherit MCP telemetry by name, got %q", got.Liveness)
 	}
@@ -400,7 +431,7 @@ func TestBuildScanFindingReachability(t *testing.T) {
 		{RuleID: "R1", Severity: finding.SeverityHigh, File: "src/collect.js", Line: 10},
 		{RuleID: "R2", Severity: finding.SeverityHigh, File: "test/collect.test.js", Line: 5},
 	}
-	got := find(t, BuildScan(lf(a), lockfile.Lockfile{}, nil, nil), "mixed").Findings
+	got := find(t, BuildScan(lf(a), lockfile.Lockfile{}, nil, nil, nil), "mixed").Findings
 	by := map[string]string{}
 	for _, f := range got {
 		by[f.RuleID] = f.Reach
@@ -421,7 +452,7 @@ func TestBuildScanCapabilityDiff(t *testing.T) {
 		Network:    []string{"api.openai.com", "evil.example"},
 		Filesystem: []string{"~/.aws"},
 	}
-	scan := BuildScan(lf(cur), lf(locked), nil, nil)
+	scan := BuildScan(lf(cur), lf(locked), nil, nil, nil)
 	got := find(t, scan, "grower").Capabilities
 	if len(got.AddedNetwork) != 1 || got.AddedNetwork[0] != "evil.example" {
 		t.Errorf("added network host should surface: %+v", got.AddedNetwork)
@@ -438,7 +469,7 @@ func TestBuildScanShadowDetection(t *testing.T) {
 	// A new npm artifact is declared/resolvable → never shadow.
 	declared := art("n1", "cursor", artifact.TypeMCPServer, "db", "sha256-y")
 
-	scan := BuildScan(lf(shadow, declared), lockfile.Lockfile{}, nil, nil)
+	scan := BuildScan(lf(shadow, declared), lockfile.Lockfile{}, nil, nil, nil)
 	if !find(t, scan, "mystery-hook").Shadow {
 		t.Error("a new, locally-defined artifact should be flagged shadow")
 	}
@@ -448,7 +479,7 @@ func TestBuildScanShadowDetection(t *testing.T) {
 
 	// Once locked, the same local artifact is accounted for → not shadow.
 	locked := lf(shadow)
-	if find(t, BuildScan(lf(shadow), locked, nil, nil), "mystery-hook").Shadow {
+	if find(t, BuildScan(lf(shadow), locked, nil, nil, nil), "mystery-hook").Shadow {
 		t.Error("a locked local artifact is accounted for and must not be shadow")
 	}
 }
@@ -466,7 +497,7 @@ func TestBuildScanFileChangesOnDrift(t *testing.T) {
 		// README.md removed
 	}
 
-	got := find(t, BuildScan(lf(cur), lf(locked), nil, nil), "pdf")
+	got := find(t, BuildScan(lf(cur), lf(locked), nil, nil, nil), "pdf")
 	if got.FileChanges == nil {
 		t.Fatal("drifted artifact should carry a FileChanges diff")
 	}
@@ -484,7 +515,7 @@ func TestBuildScanNoFileChangesWhenUnchanged(t *testing.T) {
 	locked := lf(a)
 	locked.Artifacts[0].Approval = &lockfile.Approval{Status: "approved", Sig: "ed25519:x"}
 
-	got := find(t, BuildScan(lf(a), locked, approvedSet(locked), nil), "stable")
+	got := find(t, BuildScan(lf(a), locked, approvedSet(locked), nil, nil), "stable")
 	if got.FileChanges != nil {
 		t.Errorf("unchanged artifact must not carry a FileChanges diff, got %+v", got.FileChanges)
 	}
@@ -494,7 +525,7 @@ func TestBuildScanNoFileChangesForNewArtifact(t *testing.T) {
 	// A brand-new artifact (no locked prior) has nothing to diff against.
 	a := art("d3", "claude-code", artifact.TypeSkill, "fresh", "sha256-x")
 	a.Files = []artifact.FileRef{{Path: "index.js", Hash: "a"}}
-	got := find(t, BuildScan(lf(a), lockfile.Lockfile{}, nil, nil), "fresh")
+	got := find(t, BuildScan(lf(a), lockfile.Lockfile{}, nil, nil, nil), "fresh")
 	if got.FileChanges != nil {
 		t.Errorf("new artifact has no prior manifest to diff, got %+v", got.FileChanges)
 	}
@@ -506,7 +537,7 @@ func TestBuildScanQuarantineAndProvenance(t *testing.T) {
 	locked := lf(a)
 	locked.Artifacts[0].Quarantined = true
 
-	scan := BuildScan(lf(a), locked, nil, nil)
+	scan := BuildScan(lf(a), locked, nil, nil, nil)
 	got := find(t, scan, "suspect")
 	if !got.Quarantined {
 		t.Errorf("quarantined state should surface")

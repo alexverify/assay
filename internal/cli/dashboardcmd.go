@@ -12,6 +12,7 @@ import (
 	"github.com/alexverify/assay/internal/adapters/historystore"
 	"github.com/alexverify/assay/internal/adapters/lockstore"
 	"github.com/alexverify/assay/internal/adapters/policystore"
+	"github.com/alexverify/assay/internal/adapters/repstore"
 	"github.com/alexverify/assay/internal/app/ports"
 	"github.com/alexverify/assay/internal/dashboard"
 	"github.com/alexverify/assay/internal/domain/audit"
@@ -19,6 +20,7 @@ import (
 	"github.com/alexverify/assay/internal/domain/lockfile"
 	"github.com/alexverify/assay/internal/domain/policy"
 	"github.com/alexverify/assay/internal/domain/posture"
+	"github.com/alexverify/assay/internal/domain/reputation"
 )
 
 // runDashboard serves the local, read-only web dashboard on loopback. It reads
@@ -32,6 +34,7 @@ func (a *App) runDashboard(ctx context.Context, args []string) int {
 	policyPath := fs.String("policy", "assay.policy.json", "policy file the editor reads and writes")
 	historyPath := fs.String("history", a.historyPath(), "posture-trend history file")
 	fleetDir := fs.String("fleet-dir", a.fleetDir(), "shared fleet-snapshot directory (blast radius)")
+	reputationPath := fs.String("reputation", "assay.reputation.json", "opt-in community reputation corpus (hash-keyed; absent = no signal)")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -102,6 +105,9 @@ func (a *App) runDashboard(ctx context.Context, args []string) int {
 				return fleet.Conformance{}, err
 			}
 			return fleet.CheckConformance(p, snaps), nil
+		},
+		Reputation: func() (reputation.Source, error) {
+			return repstore.Load(*reputationPath)
 		},
 	})
 

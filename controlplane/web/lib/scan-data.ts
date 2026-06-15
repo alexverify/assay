@@ -152,6 +152,17 @@ export interface Artifact {
   // Per-artifact event ribbon (F4): installed → approved → invoked → drifted,
   // ordered in time. Empty when no dated milestone is known.
   timeline?: TimelineEvent[]
+
+  // Opt-in community trust signal for this content hash (H3): how many other
+  // users trust it and when first seen. Absent = unknown (never a negative).
+  reputation?: Reputation
+}
+
+// Reputation is the hash-keyed community trust signal (H3).
+export interface Reputation {
+  trusters: number
+  firstSeen?: string
+  grade: "unknown" | "emerging" | "established"
 }
 
 // Usage is the per-artifact runtime invocation summary (F1).
@@ -450,6 +461,7 @@ export const artifacts: Artifact[] = [
     lockedHash: "sha256:7c3e…aa12",
     drift: "verified",
     usage: { firstUsed: "2026-05-15 09:12", lastUsed: "2026-06-15 08:01", lastUsedRel: "2h ago", count: 412 },
+    reputation: { trusters: 128, firstSeen: "2026-03-02", grade: "established" },
     timeline: [
       { at: "2026-05-15 09:00", kind: "installed", label: "Installed", severity: "info" },
       { at: "2026-05-15 09:08", kind: "approved", label: "Approved", detail: "by alice", severity: "ok" },
@@ -527,6 +539,7 @@ export const artifacts: Artifact[] = [
     hash: "sha256:3aa9…dd71",
     lockedHash: "sha256:3aa9…dd71",
     drift: "verified",
+    reputation: { trusters: 6, firstSeen: "2026-05-18", grade: "emerging" },
     findings: [],
   },
   {

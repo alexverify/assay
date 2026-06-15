@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils"
 import { SEVERITY_STYLES, DRIFT_STYLES, VERDICT_STYLES } from "@/lib/scan-utils"
-import type { Severity, DriftStatus, Verdict, Finding } from "@/lib/scan-data"
+import type { Severity, DriftStatus, Verdict, Finding, Artifact } from "@/lib/scan-data"
 
 export function SeverityBadge({ severity }: { severity: Severity }) {
   const s = SEVERITY_STYLES[severity]
@@ -70,6 +70,25 @@ export function ReachBadge({ reach }: { reach?: Finding["reach"] }) {
       title="This finding sits in a test / example / vendored path that does not run in production — likely noise. Demoted, not hidden."
     >
       inert path
+    </span>
+  )
+}
+
+// ReputationBadge shows the opt-in community trust signal (H3): how many other
+// users vouch for this exact content hash. Renders only when the hash is known
+// to the corpus — an unknown hash is silent (never a negative claim).
+export function ReputationBadge({ reputation }: { reputation?: Artifact["reputation"] }) {
+  if (!reputation || reputation.grade === "unknown" || reputation.trusters <= 0) return null
+  const established = reputation.grade === "established"
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-[11px] font-medium",
+        established ? "border-ok/40 bg-ok/10 text-ok" : "border-border bg-muted/40 text-muted-foreground",
+      )}
+      title={`Trusted by ${reputation.trusters} other assay users${reputation.firstSeen ? `, first seen ${reputation.firstSeen}` : ""}. Hash-only, opt-in signal.`}
+    >
+      ✓ {reputation.trusters} trust
     </span>
   )
 }

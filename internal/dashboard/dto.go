@@ -10,6 +10,7 @@ import (
 	"github.com/alexverify/assay/internal/domain/lockfile"
 	"github.com/alexverify/assay/internal/domain/provenance"
 	"github.com/alexverify/assay/internal/domain/reach"
+	"github.com/alexverify/assay/internal/domain/reputation"
 	"github.com/alexverify/assay/internal/domain/risk"
 	"github.com/alexverify/assay/internal/domain/timeline"
 	"github.com/alexverify/assay/internal/domain/trust"
@@ -82,6 +83,18 @@ type DashArtifact struct {
 	// Timeline is the per-artifact event ribbon (F4): installed → approved →
 	// invoked → drifted, ordered in time. Empty when no dated milestone is known.
 	Timeline []timeline.Event `json:"timeline,omitempty"`
+
+	// Reputation is the opt-in community trust signal for this exact content
+	// hash (H3): how many other users trust it and when it was first seen. nil
+	// when the corpus is absent or has no entry (unknown, never a negative claim).
+	Reputation *DashReputation `json:"reputation,omitempty"`
+}
+
+// DashReputation is the per-artifact community trust signal (H3).
+type DashReputation struct {
+	Trusters  int    `json:"trusters"`
+	FirstSeen string `json:"firstSeen,omitempty"`
+	Grade     string `json:"grade"` // unknown | emerging | established
 }
 
 // DashUsage is the per-artifact runtime invocation summary (F1).
@@ -175,7 +188,7 @@ func approvedSet(locked lockfile.Lockfile) map[string]bool {
 // locked snapshot, and the set of approved-and-signed artifact IDs. It is
 // pure: all IO (building inventory, reading the lockfile, verifying
 // signatures) happens in the caller.
-func BuildScan(current, locked lockfile.Lockfile, approved map[string]bool, used map[string]usage.Stat) []DashArtifact {
+func BuildScan(current, locked lockfile.Lockfile, approved map[string]bool, used map[string]usage.Stat, rep reputation.Source) []DashArtifact {
 	classes := lockfile.Classify(locked, current)
 	lockedByID := map[string]lockfile.Entry{}
 	for _, e := range locked.Artifacts {
@@ -257,6 +270,7 @@ func BuildScan(current, locked lockfile.Lockfile, approved map[string]bool, used
 			Usage:        dashUsage,
 			Sleeper:      sleeper,
 			Timeline:     ribbon,
+			Reputation:   reputationOf(e.ContentHash, rep),
 		})
 	}
 	return out
@@ -340,6 +354,21 @@ func timelineOf(e, prev lockfile.Entry, class lockfile.DriftClass, used map[stri
 		}
 	}
 	return timeline.Build(in)
+}
+
+// reputationOf joins the opt-in community trust signal (H3) to an artifact by
+// its content hash. nil when the corpus is absent or has no entry — a miss is
+// "unknown," never a negative signal, so the UI simply shows nothing.
+func reputationOf(contentHash string, rep reputation.Source) *DashReputation {
+	sig, ok := rep.Lookup(contentHash)
+	if !ok {
+		return nil
+	}
+	d := &DashReputation{Trusters: sig.Trusters, Grade: string(sig.Grade())}
+	if !sig.FirstSeen.IsZero() {
+		d.FirstSeen = sig.FirstSeen.UTC().Format("2006-01-02")
+	}
+	return d
 }
 
 // livenessOf classifies how exercised an artifact is (F3), for the capability ×

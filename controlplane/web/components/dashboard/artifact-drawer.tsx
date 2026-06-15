@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { X, FileCode2, ShieldCheck, ShieldAlert, Network, FolderTree, Terminal, EyeOff, GitCompareArrows, Clock, AlarmClock, History } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { KIND_LABELS, PATTERN_LABELS, type Artifact } from "@/lib/scan-data"
-import { SeverityBadge, DriftBadge, VerdictBadge, LivenessBadge, ReachBadge } from "@/components/dashboard/badges"
+import { SeverityBadge, DriftBadge, VerdictBadge, LivenessBadge, ReachBadge, ReputationBadge } from "@/components/dashboard/badges"
 import { runAction, muteFinding, allowEgress, type ActionKind } from "@/lib/actions"
 
 interface AuditEvent {
@@ -217,8 +217,20 @@ function Trust({ a }: { a: Artifact }) {
             </span>
           ) : null}
         </div>
-        {a.driftDetail ? <span className="text-xs text-muted-foreground">{a.driftDetail}</span> : null}
+        <div className="flex items-center gap-2">
+          <ReputationBadge reputation={a.reputation} />
+          {a.driftDetail ? <span className="text-xs text-muted-foreground">{a.driftDetail}</span> : null}
+        </div>
       </div>
+      {a.reputation && a.reputation.grade !== "unknown" && a.reputation.trusters > 0 ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Community: this exact hash is trusted by{" "}
+          <span className="text-foreground">{a.reputation.trusters}</span> other assay user
+          {a.reputation.trusters === 1 ? "" : "s"}
+          {a.reputation.firstSeen ? `, first seen ${a.reputation.firstSeen}` : ""}. Hash-only, opt-in — no
+          code or identity leaves your machine.
+        </p>
+      ) : null}
       {a.trustReasons && a.trustReasons.length > 0 ? (
         <div className="mt-3 rounded-md border border-border bg-background p-3">
           <p className="mb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">Score breakdown</p>
