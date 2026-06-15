@@ -18,6 +18,22 @@ evidence, dashboard mockups, and implementation seams.*
 > sparkline (`GET /api/history`), and a single-line first-run verdict printed after `assay scan`. All
 > shipped with tests and verified end-to-end through the real binary.
 
+> **Implementation update (next frontier — themes F–H, June 2026): all built.** A second wave
+> extended the dashboard from "what's installed / is it safe" to "what was used, and who is exposed,"
+> each an IO-free domain package the backend joins in:
+> **F1** universal usage telemetry (`internal/domain/usage`, joined from the shim's audit log);
+> **F2** dormant-then-active "sleeper" detection (old install × drift × first-ever run);
+> **F3** capability × usage fusion ranking live findings first (`internal/domain/risk`);
+> **F4** the per-artifact event timeline ribbon (`internal/domain/timeline`);
+> **G1** team blast-radius from committed content-free snapshots (`internal/domain/fleet`,
+> `assay fleet export`/`fleet`, `internal/adapters/fleetstore`);
+> **G2** the artifacts × machines inventory/drift heatmap with monoculture & outlier flags;
+> **G3** fleet policy conformance (`fleet.CheckConformance`, reusing `policy.ListViolations`);
+> **H1** the file-manifest drift diff naming exactly which files moved (`lockfile.DiffFiles`);
+> **H2** reachability-aware findings demoting test/example/vendored paths (`internal/domain/reach`);
+> **H3** an opt-in, hash-only community reputation signal (`internal/domain/reputation`,
+> `internal/adapters/repstore`). All shipped with tests and verified through the real binary.
+
 ---
 
 ## 0. TL;DR

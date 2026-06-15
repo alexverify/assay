@@ -79,3 +79,50 @@ Anything we can't pin — an unreachable registry, an `@latest` tag, `npm` not
 installed — becomes a finding rather than aborting the scan. A security tool that
 breaks a developer's workflow gets uninstalled, so degrading loudly beats failing
 hard.
+
+## Fleet is aggregated snapshots, not live telemetry
+
+The team blast-radius (`internal/domain/fleet`) is built the same offline-first
+way as approvals: each developer's `assay fleet export` writes a **content-free**
+snapshot — artifact id, name, kind, content hash, source ref, and the owner's
+local drift/verdict, *nothing else* — under `.assay/fleet/`, which is committed
+to the repo. The dashboard aggregates whatever snapshots it finds. No server, no
+telemetry upload, no secrets, no code leaves a machine. "Git is the backend,"
+the same principle as the lockfile and the trusted-keys registry. A hosted API
+could replace the directory later without changing the aggregation, which is
+pure (`fleet.Aggregate` / `fleet.CheckConformance`).
+
+## Reputation is a local, hash-only, opt-in corpus
+
+The community trust signal (`internal/domain/reputation`) is keyed solely by
+content hash — no identity, no code, no source. Privacy is **structural, not
+promised**: the corpus is data the user already holds, so a lookup
+(`Source.Lookup`) is a local map lookup that sends nothing. It is strictly
+opt-in (an absent corpus is a silent no-op, like the advisory feed offline) and
+a miss is "unknown," never a negative claim. A live hash-only lookup service
+could replace the local corpus behind the same `reputation.Source` seam; that is
+a product decision (a hosted endpoint, a published privacy contract), not a code
+change.
+
+## Reachability is a location heuristic, not a call graph
+
+A finding in a test fixture, an example script, or a vendored dependency almost
+never runs in production, so it is noise. A zero-dependency static binary cannot
+trace imports across every ecosystem, so `internal/domain/reach` classifies a
+finding's file by **path** (a `test/` `examples/` `vendor/` `node_modules/`
+segment, or a `_test.go` / `.test.` / `.spec.` name → `inert`) and the dashboard
+**demotes** inert findings — sorts them last, badges them — but **never hides**
+them. Same discipline as the H1 file-diff: name what you can prove, claim
+nothing you cannot. A future call-graph pass could upgrade the seam to true
+reachability without changing the surface.
+
+## Usage telemetry joins MCP servers by name; other kinds are honest gaps
+
+Per-artifact usage (`internal/domain/usage`) and the live/exercised finding
+ranking (`internal/domain/risk`) are derived from the MCP shim's audit log,
+which keys events by **server name**. So usage, the dormant-then-active sleeper,
+and the live-finding badge appear for wrapped MCP servers; skills, plugins, and
+hooks have no runtime hook surface yet and are simply shown as "no usage
+signal." We mark the absence honestly rather than inferring "unused" — a
+classification we cannot support — leaving the seam ready for a future
+activation hook that writes the same audit events.

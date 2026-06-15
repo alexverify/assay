@@ -214,6 +214,7 @@ lockfile, findings, and the MCP shim's audit timeline:
 ```sh
 assay dashboard                 # http://127.0.0.1:7113
 assay dashboard --addr 127.0.0.1:9000 --path . --audit-dir ~/.assay/audit
+assay dashboard --fleet-dir .assay/fleet --reputation assay.reputation.json
 ```
 
 It binds loopback only and rejects any request whose `Host` header isn't a
@@ -223,11 +224,70 @@ no auth because there is no remotely reachable surface. The UI is a Next.js app
 to install, works offline. Rebuild it with `make dashboard-web && make build`.
 
 Click any artifact in the inventory to open its **security profile**:
-provenance (source, launch command, env *keys* only — values are never shown),
-integrity (on-disk vs locked hash, signature/approval state verified against
-your trusted keys), declared capabilities, security findings, the file
-manifest, and — for MCP servers wrapped with `assay wrap` — the live
-runtime audit timeline.
+
+- **Trust verdict** — trusted / review / quarantine with a hand-recomputable
+  score breakdown, plus an opt-in **community reputation** line ("trusted by N
+  other assay users") when the artifact's exact hash is in your reputation
+  corpus (see below).
+- **Provenance** — source, launch command, env *keys* only (values are never
+  shown), and a provenance ladder.
+- **Integrity** — on-disk vs locked hash, signature/approval state verified
+  against your trusted keys, and — on a drift — a **changed-files** list naming
+  exactly which files moved (content-free; the rug-pull surface).
+- **Timeline** — the per-artifact event ribbon: installed → approved → invoked
+  → drifted, in time order.
+- **Usage** — for wrapped MCP servers, when it last/first ran and how many
+  times, sourced from the shim's audit log. A **dormant-then-active** banner
+  fires when an old, unused artifact drifts and then runs for the first time.
+- **Capabilities** — declared exec/network/filesystem, with the diff against the
+  locked version (capability expansion is flagged).
+- **Findings** — security findings, each badged by **liveness** (a finding on
+  code that actually ran outranks one on dormant code) and **reachability** (a
+  finding in a test/example/vendored path is marked `inert` and demoted as
+  likely noise — never hidden).
+
+The **Activity** tab shows the raw runtime audit timeline for wrapped MCP
+servers; the **Fleet** tab is described next.
+
+## Fleet: who is exposed (team blast-radius)
+
+The dashboard above renders one machine. For a team, the question is *who has
+what, and where the blast radius is* the moment an advisory lands. assay answers
+it the offline-first way — by aggregating **committed snapshots**, not by
+uploading live telemetry.
+
+Each developer exports a snapshot and commits it; the dashboard (or the CLI)
+aggregates whatever it finds:
+
+```sh
+assay fleet export                 # write .assay/fleet/<hostname>.json
+assay fleet export --owner alice   # or label it yourself
+git add .assay/fleet && git commit # "git is the backend" — same as approvals
+assay fleet                        # blast-radius + policy conformance, as text
+```
+
+A snapshot is **content-free** — only each artifact's id, name, kind, content
+hash, source ref, and the owner's local drift/verdict. No code, no secrets, no
+file contents — safe to commit and share. A re-export replaces the owner's prior
+snapshot, so the view always reflects the current fleet.
+
+The dashboard's **Fleet** tab turns the aggregated snapshots into three views:
+
+- **Blast radius** — "`crypto-price-feed` drifted — 3 of 8 machines have it,"
+  ranked so drifted/quarantined artifacts surface first, with a *variants* count
+  (distinct hashes across the fleet — a monoculture vs. a mid-fleet rug-pull).
+- **Inventory heatmap** — an artifacts × machines matrix colored by drift/
+  verdict, flagging **monoculture** (everyone runs the same thing) and
+  **outliers** (one machine has an extension nobody else does).
+- **Policy conformance** — every machine evaluated against the committed
+  `assay.policy.json`: who is running blocked publishers, unapproved, or
+  quarantined artifacts. It turns the policy from advisory into a measured
+  "N of M machines in policy."
+
+The reputation signal (`--reputation <file>`, default `assay.reputation.json`)
+is **opt-in and hash-only**: a content-hash → trust-count corpus you choose to
+trust. A lookup is a local map lookup, so no hash ever leaves your machine; an
+absent corpus is a silent no-op and a miss is "unknown," never a negative claim.
 
 ## Exit codes (stable contract)
 

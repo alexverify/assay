@@ -193,12 +193,50 @@ The seams are deliberate. Common extensions:
   Profile generation is pure and unit-tested; confinement itself is verified
   by host-gated integration tests.
 
-## Roadmap seams (Component 3)
+## Component 3 — dashboard & team intelligence (built)
 
-These are documented, not yet built. Each plugs into the same model:
+`assay dashboard` serves a local, loopback-only web view: a Go `/api/*` backend
+and an embedded Next.js export (`controlplane/web` → `internal/dashboard/assets`
+via `go:embed`). `internal/dashboard` assembles the UI shape in `BuildScan`
+(pure: inventory joined with the locked snapshot, drift class, findings) and
+serves it. Every intelligence feature is an IO-free domain package the backend
+joins in — same discipline as `Compare` and trust scoring:
 
-- **`internal/client`, `controlplane/`** — the team control plane (policy pull,
-  lockfile submission, audit ingest, dashboard).
+- **`internal/domain/trust`, `provenance`, `advisory`, `posture`** — the trust
+  verdict + score, the provenance ladder, the known-malicious feed, and the
+  counts-only posture trend.
+- **`internal/domain/usage`** — folds the audit log into per-artifact
+  invocation stats (last/first used, count) and the **dormant-then-active**
+  ("sleeper") rule: an old, unused artifact that drifts and then runs.
+- **`internal/domain/risk`** — capability × usage fusion: classifies a finding's
+  artifact as live / exercised / unknown and ranks exercised risk first.
+- **`internal/domain/reach`** — reachability of a finding's file by path
+  heuristic (a test/example/vendored path is `inert`, likely noise); demotes,
+  never deletes.
+- **`internal/domain/timeline`** — the per-artifact event ribbon (installed →
+  approved → invoked → drifted), ordered and labeled.
+- **`internal/domain/fleet`** — aggregates content-free per-developer snapshots
+  into a team **blast-radius**, an artifacts × machines **heatmap**, and a
+  **policy-conformance** rollup (`CheckConformance`, reusing
+  `policy.ListViolations`).
+- **`internal/domain/reputation`** — the opt-in, hash-keyed community trust
+  signal; a lookup is a local map lookup, so nothing leaves the machine.
+
+Driven adapters for the above: **`internal/adapters/auditlog`** (read the JSONL
+audit log), **`historystore`** (posture trend), **`policystore`** (policy read/
+write), **`fleetstore`** (one JSON snapshot per owner under `.assay/fleet/`),
+and **`repstore`** (the opt-in reputation corpus). The **`assay fleet`** command
+(`internal/cli/fleetcmd.go`) writes this machine's snapshot and prints the
+aggregated report; the dashboard reads the same directory.
+
+## Roadmap seams (hosted control plane)
+
+Documented, not yet built. Each plugs into the same model:
+
+- **`internal/client`, `controlplane/`** — the hosted team control plane (policy
+  pull, lockfile submission, audit ingest, a multi-tenant API). The local
+  dashboard's `BuildScan` / fleet aggregation is the same shape a hosted backend
+  would serve.
 - **`packaging/`** — release tooling beyond GoReleaser (Homebrew, install.sh,
   npm shim).
 

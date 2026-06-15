@@ -11,9 +11,11 @@ discovers every skill, MCP server, plugin, hook, and rule installed across your
 AI coding tools, hashes them into a lockfile, statically scans them, and detects
 post-audit modification — "rug pulls" — before they bite.
 
-> Status: **early**. Component 1 (the read-only `scan`/`verify` wedge) is
-> implemented and working. The runtime MCP firewall and team control plane are
-> designed and seamed but not yet built. See
+> Status: Component 1 (the read-only `scan`/`verify` wedge) and Component 2 (the
+> runtime MCP firewall — `wrap`, sandbox, egress proxy) are implemented. Component
+> 3 ships a local, embedded dashboard with usage telemetry, fleet blast-radius,
+> policy conformance, and an opt-in reputation signal; the hosted team API is
+> designed but not yet built. See
 > [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md).
 
 ## Why
@@ -58,6 +60,9 @@ make build            # builds ./bin/assay (zero external dependencies)
 ./bin/assay wrap          # audit every MCP tool call via the stdio shim
 ./bin/assay wrap --status # what's wrapped + the real underlying commands
 ./bin/assay unwrap        # restore the original MCP config
+./bin/assay dashboard     # local web dashboard: inventory, drift, usage, fleet
+./bin/assay fleet export  # write this machine's content-free snapshot to .assay/fleet
+./bin/assay fleet         # team blast-radius + policy conformance from snapshots
 ```
 
 Exit codes (stable for CI): `0` clean · `1` drift / findings over threshold ·
@@ -169,7 +174,7 @@ Requires Go 1.25+. See [CONTRIBUTING.md](CONTRIBUTING.md).
 |---|---|---|
 | 1 — `scan`/`verify`/lockfile | Read-only inventory, hashing, analysis, drift, signing/trust, CI Action | **implemented** (Claude Code, Cursor, Gemini, OpenCode, Codex, Windsurf, Copilot CLI) |
 | 2 — `wrap` | MCP interposition supervisor, OS sandbox, egress proxy + redaction | **implemented** — shim with audit log, live tool policy, egress proxy + secret redaction, OS sandbox (Seatbelt/bwrap) |
-| 3 — control plane | Policy API, audit log, approval workflow, dashboard | **in progress** — local dashboard (Next.js UI embedded in the binary, `assay dashboard`) shipped; hosted team API designed |
+| 3 — control plane | Policy API, audit log, approval workflow, dashboard | **in progress** — local dashboard (embedded Next.js UI, `assay dashboard`) shipped: trust verdicts, capability & file-manifest drift diff, usage telemetry + dormant-then-active detection, per-artifact timeline, reachability-aware findings, fleet blast-radius / inventory heatmap / policy conformance (`assay fleet`), and an opt-in hash-only reputation signal; hosted team API designed |
 
 ## License
 
