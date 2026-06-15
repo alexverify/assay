@@ -316,6 +316,42 @@ func TestBuildScanNoSleeperWithoutDrift(t *testing.T) {
 	}
 }
 
+func TestBuildScanTimelineRibbon(t *testing.T) {
+	scanAt := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	locked := art("m1", "cursor", artifact.TypeMCPServer, "db", "sha256-old")
+	locked.Source = artifact.Source{Kind: artifact.SourceNPM, Ref: "1.0.0", Integrity: "sha512-A"}
+	cur := art("m1", "cursor", artifact.TypeMCPServer, "db", "sha256-NEW")
+	cur.Source = artifact.Source{Kind: artifact.SourceNPM, Ref: "1.0.0", Integrity: "sha512-A"}
+	cur.ModifiedAt = scanAt.Add(-40 * 24 * time.Hour)
+
+	current := lockfile.Build([]artifact.Artifact{cur}, scanAt, "assay/test")
+	used := map[string]usage.Stat{
+		"db": {FirstUsed: scanAt.Add(-2 * 24 * time.Hour), LastUsed: scanAt.Add(-1 * time.Hour), Count: 5},
+	}
+	got := find(t, BuildScan(current, lf(locked), nil, used), "db")
+	if len(got.Timeline) == 0 {
+		t.Fatalf("a drifted, used MCP server should have a timeline ribbon")
+	}
+	// Must be time-ordered and lead with the install.
+	if got.Timeline[0].Kind != "installed" {
+		t.Errorf("ribbon should start with installed, got %q", got.Timeline[0].Kind)
+	}
+	for i := 1; i < len(got.Timeline); i++ {
+		if got.Timeline[i].At.Before(got.Timeline[i-1].At) {
+			t.Errorf("timeline out of order at %d", i)
+		}
+	}
+	var sawDrift bool
+	for _, e := range got.Timeline {
+		if e.Kind == "drifted" {
+			sawDrift = true
+		}
+	}
+	if !sawDrift {
+		t.Errorf("a mutated artifact should carry a drift milestone: %+v", got.Timeline)
+	}
+}
+
 func TestBuildScanCapabilityDiff(t *testing.T) {
 	locked := art("c1", "claude-code", artifact.TypeSkill, "grower", "sha256-old")
 	locked.Capabilities = artifact.Capabilities{Network: []string{"api.openai.com"}}

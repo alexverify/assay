@@ -9,6 +9,7 @@ import (
 	"github.com/alexverify/assay/internal/domain/finding"
 	"github.com/alexverify/assay/internal/domain/lockfile"
 	"github.com/alexverify/assay/internal/domain/provenance"
+	"github.com/alexverify/assay/internal/domain/timeline"
 	"github.com/alexverify/assay/internal/domain/trust"
 	"github.com/alexverify/assay/internal/domain/usage"
 )
@@ -75,6 +76,10 @@ type DashArtifact struct {
 	// Sleeper flags the dormant-then-active triple (F2): an old install that lay
 	// unused, drifted, then fired for the first time. nil unless the rule trips.
 	Sleeper *DashSleeper `json:"sleeper,omitempty"`
+
+	// Timeline is the per-artifact event ribbon (F4): installed → approved →
+	// invoked → drifted, ordered in time. Empty when no dated milestone is known.
+	Timeline []timeline.Event `json:"timeline,omitempty"`
 }
 
 // DashUsage is the per-artifact runtime invocation summary (F1).
@@ -173,6 +178,7 @@ func BuildScan(current, locked lockfile.Lockfile, approved map[string]bool, used
 		capDiff := lockfile.DiffCapabilities(prev.Capabilities, e.Capabilities)
 		secretFS := trust.SensitivePaths(e.Capabilities.Filesystem)
 		dashUsage, sleeper := usageOf(e, class, used, current.GeneratedAt)
+		ribbon := timelineOf(e, prev, class, used, current.GeneratedAt)
 
 		score := trust.Evaluate(trust.Input{
 			Findings:         e.Findings,
@@ -236,6 +242,7 @@ func BuildScan(current, locked lockfile.Lockfile, approved map[string]bool, used
 			FileChanges:  fileChanges(hasLocked, prev.Files, e.Files),
 			Usage:        dashUsage,
 			Sleeper:      sleeper,
+			Timeline:     ribbon,
 		})
 	}
 	return out
@@ -286,6 +293,39 @@ func usageOf(e lockfile.Entry, class lockfile.DriftClass, used map[string]usage.
 		return du, nil
 	}
 	return du, &DashSleeper{DormantDays: sig.DormantDays, Detail: sig.Detail}
+}
+
+// timelineOf assembles the per-artifact event ribbon (F4) from the dated facts
+// already on hand: the install mtime, the approval timestamp, the drift class
+// (detected at scan time), and — for MCP servers — first/last invocation from
+// the audit log. The domain Build orders and labels them; this seam only maps
+// the available facts in. Usage events join by server name, so they appear only
+// for MCP servers (the same constraint as usageOf).
+func timelineOf(e, prev lockfile.Entry, class lockfile.DriftClass, used map[string]usage.Stat, scanAt time.Time) []timeline.Event {
+	in := timeline.Input{
+		InstalledAt: e.ModifiedAt,
+		DriftDetail: driftDetail(class, prev, e),
+		DriftDanger: class == lockfile.DriftClassMutated || class == lockfile.DriftClassBroken,
+	}
+	if prev.Approval != nil && prev.Approval.Status == "approved" {
+		in.ApprovedAt = prev.Approval.At
+		in.ApprovedBy = prev.Approval.By
+	}
+	// A content drift (not the initial add) is the milestone worth dating; we
+	// only know it as of this scan, so we stamp it with the scan time and label
+	// it "detected" in the domain.
+	switch class {
+	case lockfile.DriftClassMutated, lockfile.DriftClassBroken, lockfile.DriftClassUpdated:
+		in.DriftedAt = scanAt
+	}
+	if e.Type == artifact.TypeMCPServer {
+		if st, ok := used[e.Name]; ok {
+			in.FirstUsed = st.FirstUsed
+			in.LastUsed = st.LastUsed
+			in.UseCount = st.Count
+		}
+	}
+	return timeline.Build(in)
 }
 
 // relativeAgo renders a coarse "3d ago" / "5h ago" / "just now" relative to the

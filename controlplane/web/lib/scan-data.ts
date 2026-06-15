@@ -137,6 +137,10 @@ export interface Artifact {
   // Dormant-then-active finding (F2): an old install that lay unused, drifted,
   // then fired for the first time. Present only when the sleeper rule trips.
   sleeper?: Sleeper
+
+  // Per-artifact event ribbon (F4): installed → approved → invoked → drifted,
+  // ordered in time. Empty when no dated milestone is known.
+  timeline?: TimelineEvent[]
 }
 
 // Usage is the per-artifact runtime invocation summary (F1).
@@ -151,6 +155,15 @@ export interface Usage {
 export interface Sleeper {
   dormantDays: number
   detail: string
+}
+
+// TimelineEvent is one dot on the per-artifact event ribbon (F4).
+export interface TimelineEvent {
+  at: string
+  kind: "installed" | "approved" | "first_used" | "last_used" | "drifted"
+  label: string
+  detail?: string
+  severity: "ok" | "info" | "high" | "critical"
 }
 
 export const SEVERITY_ORDER: Record<Severity, number> = {
@@ -239,6 +252,12 @@ export const artifacts: Artifact[] = [
     lockedHash: "sha256:7c3e…aa12",
     drift: "verified",
     usage: { firstUsed: "2026-05-15 09:12", lastUsed: "2026-06-15 08:01", lastUsedRel: "2h ago", count: 412 },
+    timeline: [
+      { at: "2026-05-15 09:00", kind: "installed", label: "Installed", severity: "info" },
+      { at: "2026-05-15 09:08", kind: "approved", label: "Approved", detail: "by alice", severity: "ok" },
+      { at: "2026-05-15 09:12", kind: "first_used", label: "First invoked", severity: "info" },
+      { at: "2026-06-15 08:01", kind: "last_used", label: "Last invoked", detail: "412 invocations total", severity: "info" },
+    ],
     findings: [
       {
         id: "f_301",
@@ -363,6 +382,11 @@ export const artifacts: Artifact[] = [
       detail:
         "dormant 65 days, then its content drifted and it ran for the first time — quarantine and review",
     },
+    timeline: [
+      { at: "2026-04-10 14:30", kind: "installed", label: "Installed", severity: "info" },
+      { at: "2026-06-13 22:05", kind: "drifted", label: "Drift detected", detail: "content hash changed with no version bump — what runs now is not what you locked", severity: "critical" },
+      { at: "2026-06-14 03:22", kind: "first_used", label: "First invoked", detail: "2 invocations total", severity: "info" },
+    ],
     findings: [
       {
         id: "f_601",

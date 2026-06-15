@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { X, FileCode2, ShieldCheck, ShieldAlert, Network, FolderTree, Terminal, EyeOff, GitCompareArrows, Clock, AlarmClock } from "lucide-react"
+import { X, FileCode2, ShieldCheck, ShieldAlert, Network, FolderTree, Terminal, EyeOff, GitCompareArrows, Clock, AlarmClock, History } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { KIND_LABELS, PATTERN_LABELS, type Artifact } from "@/lib/scan-data"
 import { SeverityBadge, DriftBadge, VerdictBadge } from "@/components/dashboard/badges"
@@ -114,6 +114,7 @@ function DrawerBody({
         <ProvenanceLadder a={a} />
         <Provenance a={a} />
         <Integrity a={a} />
+        <Timeline a={a} />
         <Usage a={a} />
         <ChangedFiles a={a} />
         <Capabilities a={a} />
@@ -339,6 +340,58 @@ function SleeperBanner({ a }: { a: Artifact }) {
       </p>
       <p className="mt-1.5 text-xs leading-relaxed text-foreground">{a.sleeper.detail}</p>
     </div>
+  )
+}
+
+// dotColor maps a timeline severity onto the dashboard color tokens.
+const dotColor: Record<string, string> = {
+  ok: "bg-ok",
+  info: "bg-muted-foreground",
+  high: "bg-sev-high",
+  critical: "bg-sev-critical",
+}
+
+// Timeline renders the per-artifact event ribbon (F4): the unified "what
+// happened, when" history — installed → approved → invoked → drifted — that a
+// reviewer wants in an incident, where the rest of the drawer shows only
+// current state. Built server-side from dated facts; shown when any exist.
+function Timeline({ a }: { a: Artifact }) {
+  const events = a.timeline ?? []
+  if (events.length === 0) return null
+  return (
+    <Section icon={History} title="Timeline">
+      <ol className="relative ml-1.5 border-l border-border">
+        {events.map((e, i) => (
+          <li key={`${e.kind}-${i}`} className="relative ml-4 pb-4 last:pb-0">
+            <span
+              className={cn(
+                "absolute -left-[1.4rem] top-1 h-2.5 w-2.5 rounded-full ring-2 ring-card",
+                dotColor[e.severity] ?? "bg-muted-foreground",
+              )}
+              aria-hidden
+            />
+            <div className="flex items-baseline justify-between gap-3">
+              <span
+                className={cn(
+                  "text-xs font-medium",
+                  e.severity === "critical"
+                    ? "text-sev-critical"
+                    : e.severity === "high"
+                      ? "text-sev-high"
+                      : e.severity === "ok"
+                        ? "text-ok"
+                        : "text-foreground",
+                )}
+              >
+                {e.label}
+              </span>
+              <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{e.at}</span>
+            </div>
+            {e.detail ? <p className="mt-0.5 text-[11px] text-muted-foreground">{e.detail}</p> : null}
+          </li>
+        ))}
+      </ol>
+    </Section>
   )
 }
 
