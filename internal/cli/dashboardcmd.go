@@ -92,6 +92,17 @@ func (a *App) runDashboard(ctx context.Context, args []string) int {
 			}
 			return fleet.Aggregate(snaps), nil
 		},
+		Conformance: func(context.Context) (fleet.Conformance, error) {
+			snaps, err := fleetstore.Read(*fleetDir)
+			if err != nil {
+				return fleet.Conformance{}, err
+			}
+			p, _, err := policystore.Load(*policyPath)
+			if err != nil {
+				return fleet.Conformance{}, err
+			}
+			return fleet.CheckConformance(p, snaps), nil
+		},
 	})
 
 	ln, err := net.Listen("tcp", *addr)

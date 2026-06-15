@@ -209,6 +209,28 @@ export interface FleetGrid {
   rows: FleetGridRow[]
 }
 
+// FleetOffender is one out-of-policy install on a machine (G3).
+export interface FleetOffender {
+  id: string
+  name: string
+  kind: string
+  reasons: string[] // blocked_publisher | blocked_artifact | not_allowlisted | unapproved | quarantined
+}
+
+// FleetOwnerConformance is one machine's compliance with the committed policy.
+export interface FleetOwnerConformance {
+  owner: string
+  compliant: boolean
+  violations?: FleetOffender[]
+}
+
+// FleetConformance is the fleet-wide policy-compliance rollup (G3).
+export interface FleetConformance {
+  owners: number
+  compliant: number
+  machines: FleetOwnerConformance[]
+}
+
 // FleetReport is the aggregated team picture, assembled from committed,
 // content-free snapshots — no live telemetry upload.
 export interface FleetReport {
@@ -216,6 +238,16 @@ export interface FleetReport {
   artifacts: number
   exposures: FleetExposure[]
   grid?: FleetGrid
+  conformance?: FleetConformance
+}
+
+// Human labels for policy-conformance reasons (G3).
+export const CONFORMANCE_REASONS: Record<string, string> = {
+  blocked_publisher: "blocked publisher",
+  blocked_artifact: "blocked artifact",
+  not_allowlisted: "publisher not allow-listed",
+  unapproved: "unapproved",
+  quarantined: "quarantined",
 }
 
 // Demo fleet, shown when no committed snapshots are present (offline/demo).
@@ -309,6 +341,20 @@ export const demoFleet: FleetReport = {
         outlier: true,
         cells: [_, _, _, _, _, _, _, { drift: "new", verdict: "review" }],
       },
+    ],
+  },
+  conformance: {
+    owners: 8,
+    compliant: 4,
+    machines: [
+      { owner: "dana", compliant: false, violations: [{ id: "skl_005", name: "crypto-price-feed", kind: "skill", reasons: ["quarantined", "unapproved"] }] },
+      { owner: "carol", compliant: false, violations: [{ id: "mcp_002", name: "filesystem-mcp", kind: "mcp", reasons: ["unapproved"] }] },
+      { owner: "erin", compliant: false, violations: [{ id: "skl_005", name: "crypto-price-feed", kind: "skill", reasons: ["unapproved"] }] },
+      { owner: "heidi", compliant: false, violations: [{ id: "hook_x", name: "shadow-deploy", kind: "hook", reasons: ["unapproved"] }] },
+      { owner: "alice", compliant: true },
+      { owner: "bob", compliant: true },
+      { owner: "frank", compliant: true },
+      { owner: "grace", compliant: true },
     ],
   },
 }

@@ -64,6 +64,9 @@ type Deps struct {
 	// Fleet returns the aggregated team blast-radius (G1) from committed
 	// snapshots. Optional: when nil, GET /api/fleet returns an empty report.
 	Fleet func(context.Context) (fleet.Report, error)
+	// Conformance returns the fleet's policy-compliance rollup (G3): which
+	// machines run blocked/unapproved artifacts. Optional: nil → empty.
+	Conformance func(context.Context) (fleet.Conformance, error)
 	// Static overrides the embedded UI assets (used in tests); nil uses the
 	// embedded Next.js export.
 	Static fs.FS
@@ -309,7 +312,22 @@ func (s *Server) handleFleet(w http.ResponseWriter, r *http.Request) {
 		}
 		rep = got
 	}
-	writeJSON(w, rep)
+	var con fleet.Conformance
+	if s.deps.Conformance != nil {
+		got, err := s.deps.Conformance(r.Context())
+		if err != nil {
+			httpError(w, err)
+			return
+		}
+		con = got
+	}
+	// Embed the report (owners/artifacts/exposures/grid) and add conformance so
+	// the Fleet tab gets blast radius (G1), heatmap (G2), and compliance (G3) in
+	// one fetch.
+	writeJSON(w, struct {
+		fleet.Report
+		Conformance fleet.Conformance `json:"conformance"`
+	}{Report: rep, Conformance: con})
 }
 
 // handlePolicy serves the committed policy (GET) and edits its allow/block

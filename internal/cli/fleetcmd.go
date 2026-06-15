@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/alexverify/assay/internal/adapters/fleetstore"
 	"github.com/alexverify/assay/internal/adapters/lockstore"
+	"github.com/alexverify/assay/internal/adapters/policystore"
 	"github.com/alexverify/assay/internal/app/ports"
 	"github.com/alexverify/assay/internal/dashboard"
 	"github.com/alexverify/assay/internal/domain/fleet"
@@ -31,6 +33,7 @@ func (a *App) runFleet(ctx context.Context, args []string) int {
 	c := bindCommon(fs)
 	dir := fs.String("dir", a.fleetDir(), "shared fleet-snapshot directory")
 	owner := fs.String("owner", "", "snapshot owner label (default: hostname)")
+	policyPath := fs.String("policy", "assay.policy.json", "policy file for conformance (show)")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -39,7 +42,7 @@ func (a *App) runFleet(ctx context.Context, args []string) int {
 	case "export":
 		return a.fleetExport(ctx, c, *dir, *owner)
 	case "", "show", "status":
-		return a.fleetShow(*dir)
+		return a.fleetShow(*dir, *policyPath)
 	default:
 		fmt.Fprintf(a.Stderr, "fleet: unknown subcommand %q (want: export | show)\n", sub)
 		return ExitUsage
@@ -77,8 +80,9 @@ func (a *App) fleetExport(ctx context.Context, c commonFlags, dir, owner string)
 	return ExitOK
 }
 
-// fleetShow aggregates every snapshot under dir and prints the blast radius.
-func (a *App) fleetShow(dir string) int {
+// fleetShow aggregates every snapshot under dir and prints the blast radius,
+// plus policy conformance when a policy file is present.
+func (a *App) fleetShow(dir, policyPath string) int {
 	snaps, err := fleetstore.Read(dir)
 	if err != nil {
 		fmt.Fprintf(a.Stderr, "fleet: %v\n", err)
@@ -103,6 +107,20 @@ func (a *App) fleetShow(dir string) int {
 		}
 		fmt.Fprintf(a.Stdout, "%-28s %-8s %d/%d machines%s\n", e.Name, e.Kind, e.Installs, r.Owners, risk)
 	}
+
+	// Policy conformance (G3): who is out of compliance with the committed policy.
+	if p, _, err := policystore.Load(policyPath); err == nil {
+		con := fleet.CheckConformance(p, snaps)
+		fmt.Fprintf(a.Stdout, "\nconformance: %d/%d machines in policy\n", con.Compliant, con.Owners)
+		for _, m := range con.Machines {
+			if m.Compliant {
+				continue
+			}
+			for _, v := range m.Violations {
+				fmt.Fprintf(a.Stdout, "  %-10s %-24s %s\n", m.Owner, v.Name, strings.Join(v.Reasons, ", "))
+			}
+		}
+	}
 	return ExitOK
 }
 
@@ -118,6 +136,7 @@ func snapshotArtifacts(current, locked lockfile.Lockfile) []fleet.Artifact {
 			Name:    d.Name,
 			Kind:    d.Kind,
 			Hash:    d.Hash,
+			Source:  d.Source,
 			Drift:   d.Drift,
 			Verdict: d.Verdict,
 		})

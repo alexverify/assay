@@ -73,6 +73,36 @@ func TestFleetEndpoint(t *testing.T) {
 	if e := rep.Exposures[0]; e.Installs != 2 || e.Drifted != 1 || e.Variants != 2 {
 		t.Errorf("blast radius = %+v", e)
 	}
+	// The same endpoint also carries the heatmap (G2).
+	if len(rep.Grid.Rows) != 1 || len(rep.Grid.Owners) != 2 {
+		t.Errorf("grid = %+v", rep.Grid)
+	}
+}
+
+func TestFleetEndpointCarriesConformance(t *testing.T) {
+	srv := dashboard.New(dashboard.Deps{
+		Conformance: func(context.Context) (fleet.Conformance, error) {
+			return fleet.CheckConformance(
+				policy.Policy{BlockPublishers: []string{"evil.example"}},
+				[]fleet.Snapshot{
+					{Owner: "alice", Artifacts: []fleet.Artifact{{ID: "ok", Name: "linter", Source: "github.com/x", Drift: "verified", Verdict: "trusted"}}},
+					{Owner: "bob", Artifacts: []fleet.Artifact{{ID: "bad", Name: "feed", Source: "evil.example/f", Drift: "verified", Verdict: "trusted"}}},
+				}), nil
+		},
+	})
+	rec := get(t, srv.Handler(), "/api/fleet")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var resp struct {
+		Conformance fleet.Conformance `json:"conformance"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	if resp.Conformance.Owners != 2 || resp.Conformance.Compliant != 1 {
+		t.Errorf("conformance = %+v", resp.Conformance)
+	}
 }
 
 func TestFleetEndpointEmptyWhenUnset(t *testing.T) {

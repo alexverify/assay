@@ -3,6 +3,8 @@ package fleet
 import (
 	"testing"
 	"time"
+
+	"github.com/alexverify/assay/internal/domain/policy"
 )
 
 func ts(s string) time.Time {
@@ -193,6 +195,96 @@ func TestGridSingleOwnerHasNoMonoculture(t *testing.T) {
 	if r.Monoculture || r.Outlier {
 		t.Errorf("single-owner fleet should flag neither: %+v", r)
 	}
+}
+
+func machine(t *testing.T, c Conformance, owner string) OwnerConformance {
+	t.Helper()
+	for _, m := range c.Machines {
+		if m.Owner == owner {
+			return m
+		}
+	}
+	t.Fatalf("no conformance for %q", owner)
+	return OwnerConformance{}
+}
+
+func TestConformanceBlockedPublisherAndAllowlist(t *testing.T) {
+	p := policy.Policy{
+		BlockPublishers: []string{"evil.example"},
+		AllowPublishers: []string{"github.com", "evil.example"},
+	}
+	snaps := []Snapshot{
+		{Owner: "alice", Artifacts: []Artifact{
+			{ID: "ok", Name: "linter", Kind: "skill", Source: "github.com/tools/linter", Drift: "verified", Verdict: "trusted"},
+		}},
+		{Owner: "bob", Artifacts: []Artifact{
+			{ID: "bad", Name: "feed", Kind: "mcp", Source: "evil.example/feed", Drift: "verified", Verdict: "trusted"},
+			{ID: "off", Name: "rogue", Kind: "skill", Source: "random.net/rogue", Drift: "verified", Verdict: "trusted"},
+		}},
+	}
+	c := CheckConformance(p, snaps)
+
+	if c.Owners != 2 || c.Compliant != 1 {
+		t.Fatalf("owners=%d compliant=%d, want 2/1", c.Owners, c.Compliant)
+	}
+	if !machine(t, c, "alice").Compliant {
+		t.Errorf("alice's allowlisted, unblocked install should be compliant")
+	}
+	bob := machine(t, c, "bob")
+	if bob.Compliant || len(bob.Violations) != 2 {
+		t.Fatalf("bob should have 2 offending artifacts: %+v", bob.Violations)
+	}
+	// Offenders sort first.
+	if c.Machines[0].Owner != "bob" {
+		t.Errorf("the offending machine should sort first, got %q", c.Machines[0].Owner)
+	}
+}
+
+func TestConformanceRequireApprovalAndQuarantine(t *testing.T) {
+	p := policy.Policy{RequireApproval: true}
+	snaps := []Snapshot{
+		{Owner: "carol", Artifacts: []Artifact{
+			{ID: "a", Name: "clean", Kind: "skill", Drift: "verified", Verdict: "trusted"},
+			{ID: "b", Name: "drifted", Kind: "mcp", Drift: "drifted", Verdict: "quarantine"},
+			{ID: "c", Name: "fresh", Kind: "skill", Drift: "new", Verdict: "review"},
+		}},
+	}
+	c := CheckConformance(p, snaps)
+	carol := machine(t, c, "carol")
+	if carol.Compliant {
+		t.Fatalf("carol runs unapproved + quarantined artifacts")
+	}
+	reasons := map[string][]string{}
+	for _, v := range carol.Violations {
+		reasons[v.ID] = v.Reasons
+	}
+	if has(reasons["a"], "unapproved") {
+		t.Errorf("a verified install must not be flagged unapproved")
+	}
+	if !has(reasons["b"], "unapproved") || !has(reasons["b"], "quarantined") {
+		t.Errorf("drifted+quarantined install should flag both, got %v", reasons["b"])
+	}
+	if !has(reasons["c"], "unapproved") {
+		t.Errorf("a new (unlocked) install should be unapproved, got %v", reasons["c"])
+	}
+}
+
+func TestConformanceEmptyPolicyIsAllCompliant(t *testing.T) {
+	c := CheckConformance(policy.Policy{}, []Snapshot{
+		{Owner: "a", Artifacts: []Artifact{{ID: "x", Name: "n", Kind: "skill", Drift: "new", Verdict: "review"}}},
+	})
+	if c.Compliant != 1 || !c.Machines[0].Compliant {
+		t.Errorf("with no policy constraints every machine is compliant: %+v", c)
+	}
+}
+
+func has(xs []string, v string) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 func ids(es []Exposure) []string {

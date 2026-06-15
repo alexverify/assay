@@ -13,6 +13,8 @@ package fleet
 import (
 	"sort"
 	"time"
+
+	"github.com/alexverify/assay/internal/domain/policy"
 )
 
 // Artifact is the content-free record of one installed artifact: identity and
@@ -22,8 +24,9 @@ type Artifact struct {
 	Name    string `json:"name"`
 	Kind    string `json:"kind"`
 	Hash    string `json:"hash"`
-	Drift   string `json:"drift"`   // verified|updated|drifted|new|unsigned
-	Verdict string `json:"verdict"` // trusted|review|quarantine
+	Source  string `json:"source,omitempty"` // publisher/source ref (e.g. pkg@ver, url) — for policy conformance; not secret
+	Drift   string `json:"drift"`            // verified|updated|drifted|new|unsigned
+	Verdict string `json:"verdict"`          // trusted|review|quarantine
 }
 
 // Snapshot is one developer/machine's inventory at a moment. Owner is a
@@ -211,6 +214,85 @@ func buildGrid(latest map[string]Snapshot, owners []string) Grid {
 	})
 
 	return Grid{Owners: owners, Rows: rows}
+}
+
+// OffendingArtifact is one out-of-policy install on a machine, with the reasons
+// it fails (e.g. blocked_publisher, not_allowlisted, unapproved, quarantined).
+type OffendingArtifact struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Kind    string   `json:"kind"`
+	Reasons []string `json:"reasons"`
+}
+
+// OwnerConformance is one machine's compliance with the committed policy.
+type OwnerConformance struct {
+	Owner      string              `json:"owner"`
+	Compliant  bool                `json:"compliant"`
+	Violations []OffendingArtifact `json:"violations,omitempty"`
+}
+
+// Conformance is the fleet-wide policy compliance rollup (G3): how many machines
+// honor the committed policy, and exactly which artifacts put the rest out of
+// compliance. It turns the policy from advisory into measurable across the team.
+type Conformance struct {
+	Owners    int                `json:"owners"`    // machines evaluated
+	Compliant int                `json:"compliant"` // machines fully in policy
+	Machines  []OwnerConformance `json:"machines"`  // per-owner, sorted; offenders first
+}
+
+// CheckConformance evaluates every machine's snapshot against the committed
+// policy. It reuses policy.ListViolations for the publisher/artifact allow and
+// block lists (identical semantics to the verify gate), and reads each install's
+// local drift/verdict for approval and quarantine state — all the snapshot
+// carries, no lockfile required. Pure: the caller supplies the policy and snaps.
+func CheckConformance(p policy.Policy, snaps []Snapshot) Conformance {
+	p = p.Normalize()
+	latest := latestPerOwner(snaps)
+
+	owners := make([]string, 0, len(latest))
+	for o := range latest {
+		owners = append(owners, o)
+	}
+	sort.Strings(owners)
+
+	machines := make([]OwnerConformance, 0, len(owners))
+	compliant := 0
+	for _, owner := range owners {
+		var offenders []OffendingArtifact
+		for _, a := range latest[owner].Artifacts {
+			var reasons []string
+			for _, v := range p.ListViolations(a.ID, a.Name, a.Source) {
+				reasons = append(reasons, v.Kind)
+			}
+			// Approval and quarantine are read from the install's local state,
+			// which the snapshot already carries as drift/verdict.
+			if p.RequireApproval && a.Drift != "verified" {
+				reasons = append(reasons, "unapproved")
+			}
+			if a.Verdict == "quarantine" {
+				reasons = append(reasons, "quarantined")
+			}
+			if len(reasons) > 0 {
+				offenders = append(offenders, OffendingArtifact{ID: a.ID, Name: a.Name, Kind: a.Kind, Reasons: reasons})
+			}
+		}
+		ok := len(offenders) == 0
+		if ok {
+			compliant++
+		}
+		machines = append(machines, OwnerConformance{Owner: owner, Compliant: ok, Violations: offenders})
+	}
+
+	// Offenders first (most violations on top), then by owner for stability.
+	sort.SliceStable(machines, func(i, j int) bool {
+		if len(machines[i].Violations) != len(machines[j].Violations) {
+			return len(machines[i].Violations) > len(machines[j].Violations)
+		}
+		return machines[i].Owner < machines[j].Owner
+	})
+
+	return Conformance{Owners: len(owners), Compliant: compliant, Machines: machines}
 }
 
 // latestPerOwner keeps each owner's most recent snapshot (by GeneratedAt),

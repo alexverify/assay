@@ -23,12 +23,14 @@ import {
   KIND_LABELS,
   PATTERN_LABELS,
   demoFleet,
+  CONFORMANCE_REASONS,
   type Agent,
   type Artifact,
   type ArtifactKind,
   type FleetReport,
   type FleetGrid,
   type FleetCell,
+  type FleetConformance,
 } from "@/lib/scan-data"
 import {
   getAllFindings,
@@ -939,6 +941,7 @@ function FleetPanel({ live }: { live: boolean }) {
         </div>
       ) : (
         <>
+          {report.conformance ? <FleetConformancePanel c={report.conformance} /> : null}
           {report.grid && report.grid.rows.length > 0 ? <FleetHeatmap grid={report.grid} /> : null}
           <div className="flex flex-col gap-2">
             {report.exposures.map((e) => (
@@ -946,6 +949,59 @@ function FleetPanel({ live }: { live: boolean }) {
             ))}
           </div>
         </>
+      )}
+    </div>
+  )
+}
+
+// FleetConformancePanel reports policy compliance across the team (G3): how many
+// machines honor the committed policy, and exactly which artifacts put the rest
+// out of compliance. It turns the Policy tab's one file into a measured roll-up.
+function FleetConformancePanel({ c }: { c: FleetConformance }) {
+  const offenders = c.machines.filter((m) => !m.compliant)
+  const allClear = offenders.length === 0
+  return (
+    <div
+      className={cn(
+        "rounded-lg border p-4",
+        allClear ? "border-ok/30 bg-ok/5" : "border-sev-critical/40 bg-sev-critical/5",
+      )}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
+          <SlidersHorizontal className="h-3.5 w-3.5" /> Policy conformance
+        </p>
+        <p className={cn("font-mono text-xs", allClear ? "text-ok" : "text-sev-critical")}>
+          {c.compliant}/{c.owners} machines in policy
+        </p>
+      </div>
+      {allClear ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          Every machine honors the committed policy.
+        </p>
+      ) : (
+        <div className="mt-3 flex flex-col gap-1.5">
+          {offenders.map((m) => (
+            <div key={m.owner} className="rounded-md border border-border bg-background px-3 py-2">
+              <span className="font-mono text-xs font-medium text-foreground">{m.owner}</span>
+              <div className="mt-1 flex flex-col gap-1">
+                {(m.violations ?? []).map((v) => (
+                  <div key={v.id} className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
+                    <span className="text-muted-foreground">{v.name}</span>
+                    {v.reasons.map((r) => (
+                      <span
+                        key={r}
+                        className="rounded border border-sev-high/40 bg-sev-high/10 px-1.5 py-0.5 text-sev-high"
+                      >
+                        {CONFORMANCE_REASONS[r] ?? r}
+                      </span>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )

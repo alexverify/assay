@@ -174,20 +174,30 @@ func Evaluate(p Policy, locked, current lockfile.Lockfile) Result {
 
 	// Allow/block lists, applied to the current snapshot.
 	for _, e := range current.Artifacts {
-		src := strings.ToLower(e.Source.Ref)
-		name := strings.ToLower(e.Name)
-		if m, ok := containsAny(src, p.BlockPublishers); ok {
-			violations = append(violations, Violation{Kind: "blocked_publisher", ID: e.ID, Name: e.Name, Detail: m})
-		}
-		if m, ok := containsAny(name, p.BlockArtifacts); ok {
-			violations = append(violations, Violation{Kind: "blocked_artifact", ID: e.ID, Name: e.Name, Detail: m})
-		}
-		if len(p.AllowPublishers) > 0 {
-			if _, ok := containsAny(src, p.AllowPublishers); !ok {
-				violations = append(violations, Violation{Kind: "not_allowlisted", ID: e.ID, Name: e.Name})
-			}
-		}
+		violations = append(violations, p.ListViolations(e.ID, e.Name, e.Source.Ref)...)
 	}
 
 	return Result{Violations: violations}
+}
+
+// ListViolations applies the publisher/artifact allow and block lists to a
+// single artifact's name and source ref, returning any matches. It is the one
+// home for that matching so the verify gate (Evaluate) and the fleet
+// conformance check share identical semantics. Pure: no lockfile needed.
+func (p Policy) ListViolations(id, name, sourceRef string) []Violation {
+	src := strings.ToLower(sourceRef)
+	lname := strings.ToLower(name)
+	var out []Violation
+	if m, ok := containsAny(src, p.BlockPublishers); ok {
+		out = append(out, Violation{Kind: "blocked_publisher", ID: id, Name: name, Detail: m})
+	}
+	if m, ok := containsAny(lname, p.BlockArtifacts); ok {
+		out = append(out, Violation{Kind: "blocked_artifact", ID: id, Name: name, Detail: m})
+	}
+	if len(p.AllowPublishers) > 0 {
+		if _, ok := containsAny(src, p.AllowPublishers); !ok {
+			out = append(out, Violation{Kind: "not_allowlisted", ID: id, Name: name})
+		}
+	}
+	return out
 }
