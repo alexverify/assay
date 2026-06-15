@@ -13,6 +13,19 @@ export interface FlatFinding extends Finding {
   agent: Artifact["agent"]
 }
 
+// LIVENESS_RANK orders findings of equal severity by exercised risk (F3): a
+// finding on code that actually ran sorts above the same finding on code that
+// only sits on disk.
+const LIVENESS_RANK: Record<NonNullable<Finding["liveness"]>, number> = {
+  live: 2,
+  exercised: 1,
+  unknown: 0,
+}
+
+function livenessWeight(f: Finding): number {
+  return f.liveness ? LIVENESS_RANK[f.liveness] : 0
+}
+
 export function getAllFindings(artifacts: Artifact[]): FlatFinding[] {
   return artifacts
     .flatMap((a) =>
@@ -23,7 +36,13 @@ export function getAllFindings(artifacts: Artifact[]): FlatFinding[] {
         agent: a.agent,
       })),
     )
-    .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
+    .sort(
+      (a, b) =>
+        // Severity first (the dashboard's primary axis), then exercised risk so
+        // live findings lead within a severity band.
+        SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] ||
+        livenessWeight(b) - livenessWeight(a),
+    )
 }
 
 export function severityCounts(artifacts: Artifact[]): Record<Severity, number> {

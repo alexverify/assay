@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils"
 import { SEVERITY_STYLES, DRIFT_STYLES, VERDICT_STYLES } from "@/lib/scan-utils"
-import type { Severity, DriftStatus, Verdict } from "@/lib/scan-data"
+import type { Severity, DriftStatus, Verdict, Finding } from "@/lib/scan-data"
 
 export function SeverityBadge({ severity }: { severity: Severity }) {
   const s = SEVERITY_STYLES[severity]
@@ -31,6 +31,30 @@ export function DriftBadge({ status }: { status: DriftStatus }) {
       )}
     >
       {d.label}
+    </span>
+  )
+}
+
+// LivenessBadge marks how exercised the finding's artifact is (F3). Only the
+// positive signals (live / exercised) are shown — "unknown" (no telemetry) is
+// the silent baseline, so the badge highlights what is bad *and running*.
+export function LivenessBadge({ liveness }: { liveness?: Finding["liveness"] }) {
+  if (liveness !== "live" && liveness !== "exercised") return null
+  const live = liveness === "live"
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 font-mono text-[11px] font-medium uppercase tracking-wide",
+        live ? "border-sev-critical/40 bg-sev-critical/10 text-sev-critical" : "border-border bg-muted/40 text-muted-foreground",
+      )}
+      title={
+        live
+          ? "This artifact ran recently — its risky paths are live, not hypothetical."
+          : "This artifact has run at least once."
+      }
+    >
+      {live ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sev-critical" aria-hidden /> : null}
+      {live ? "Live" : "Exercised"}
     </span>
   )
 }

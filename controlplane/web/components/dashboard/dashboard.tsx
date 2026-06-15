@@ -41,7 +41,7 @@ import {
   type PolicyMute,
 } from "@/lib/actions"
 import { StatCard } from "@/components/dashboard/stat-card"
-import { SeverityBadge, DriftBadge, VerdictBadge } from "@/components/dashboard/badges"
+import { SeverityBadge, DriftBadge, VerdictBadge, LivenessBadge } from "@/components/dashboard/badges"
 import { ArtifactDrawer } from "@/components/dashboard/artifact-drawer"
 
 type TabId = "changes" | "inventory" | "findings" | "drift" | "activity" | "policy"
@@ -428,6 +428,7 @@ function FindingsPanel({ findings }: { findings: ReturnType<typeof getAllFinding
                 )}
               />
               <SeverityBadge severity={f.severity} />
+              <LivenessBadge liveness={f.liveness} />
               <span className="min-w-0 flex-1 truncate text-sm text-foreground">{f.title}</span>
               <span className="hidden font-mono text-xs text-muted-foreground sm:inline">
                 {f.artifactName}

@@ -9,6 +9,7 @@ import (
 	"github.com/alexverify/assay/internal/domain/finding"
 	"github.com/alexverify/assay/internal/domain/lockfile"
 	"github.com/alexverify/assay/internal/domain/provenance"
+	"github.com/alexverify/assay/internal/domain/risk"
 	"github.com/alexverify/assay/internal/domain/timeline"
 	"github.com/alexverify/assay/internal/domain/trust"
 	"github.com/alexverify/assay/internal/domain/usage"
@@ -142,6 +143,12 @@ type DashFinding struct {
 	Detail   string `json:"detail"`
 	Evidence string `json:"evidence"`
 	Location string `json:"location"`
+
+	// Capability × usage fusion (F3): how exercised the carrying artifact is
+	// (live | exercised | unknown), and the fused urgency rank that lifts a
+	// finding on code that actually runs above the same finding on dormant code.
+	Liveness string `json:"liveness,omitempty"`
+	RiskRank int    `json:"riskRank,omitempty"`
 }
 
 // approvedSet returns the IDs of locked artifacts with a signed-and-approved
@@ -179,6 +186,7 @@ func BuildScan(current, locked lockfile.Lockfile, approved map[string]bool, used
 		secretFS := trust.SensitivePaths(e.Capabilities.Filesystem)
 		dashUsage, sleeper := usageOf(e, class, used, current.GeneratedAt)
 		ribbon := timelineOf(e, prev, class, used, current.GeneratedAt)
+		live := livenessOf(e, used, current.GeneratedAt)
 
 		score := trust.Evaluate(trust.Input{
 			Findings:         e.Findings,
@@ -208,7 +216,7 @@ func BuildScan(current, locked lockfile.Lockfile, approved map[string]bool, used
 			Hash:           e.ContentHash,
 			LockedHash:     prev.ContentHash,
 			Drift:          driftStatus(class, hasLocked, approved[e.ID]),
-			Findings:       mapFindings(e.Findings),
+			Findings:       mapFindings(e.Findings, live),
 			Scope:          e.Scope,
 			SourceKind:     string(e.Source.Kind),
 			DiscoveredFrom: e.DiscoveredFrom,
@@ -326,6 +334,18 @@ func timelineOf(e, prev lockfile.Entry, class lockfile.DriftClass, used map[stri
 		}
 	}
 	return timeline.Build(in)
+}
+
+// livenessOf classifies how exercised an artifact is (F3), for the capability ×
+// usage fusion on its findings. Runtime telemetry joins by server name, so only
+// MCP servers can present positive evidence; every other kind is Unknown (no
+// telemetry path), never falsely dormant.
+func livenessOf(e lockfile.Entry, used map[string]usage.Stat, now time.Time) risk.Liveness {
+	stat, found := used[e.Name]
+	if e.Type != artifact.TypeMCPServer {
+		found = false
+	}
+	return risk.Classify(stat, found, now)
 }
 
 // relativeAgo renders a coarse "3d ago" / "5h ago" / "just now" relative to the
@@ -505,7 +525,7 @@ func versionOf(s artifact.Source) string {
 	}
 }
 
-func mapFindings(fs []finding.Finding) []DashFinding {
+func mapFindings(fs []finding.Finding, live risk.Liveness) []DashFinding {
 	out := make([]DashFinding, 0, len(fs))
 	for _, f := range fs {
 		out = append(out, DashFinding{
@@ -518,6 +538,8 @@ func mapFindings(fs []finding.Finding) []DashFinding {
 			Detail:   f.Explanation,
 			Evidence: f.Snippet,
 			Location: location(f),
+			Liveness: string(live),
+			RiskRank: risk.Rank(f.Severity, live),
 		})
 	}
 	return out

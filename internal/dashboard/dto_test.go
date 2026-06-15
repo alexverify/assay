@@ -352,6 +352,48 @@ func TestBuildScanTimelineRibbon(t *testing.T) {
 	}
 }
 
+func TestBuildScanFindingLivenessFusion(t *testing.T) {
+	scanAt := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	// Two MCP servers with an identical high finding: one invoked yesterday,
+	// one with no telemetry. The live one's finding must rank higher (F3).
+	live := art("m1", "cursor", artifact.TypeMCPServer, "live-srv", "sha256-a")
+	live.Findings = []finding.Finding{{RuleID: "R1", Severity: finding.SeverityHigh, Explanation: "x"}}
+	cold := art("m2", "cursor", artifact.TypeMCPServer, "cold-srv", "sha256-b")
+	cold.Findings = []finding.Finding{{RuleID: "R1", Severity: finding.SeverityHigh, Explanation: "x"}}
+
+	current := lockfile.Build([]artifact.Artifact{live, cold}, scanAt, "assay/test")
+	used := map[string]usage.Stat{
+		"live-srv": {FirstUsed: scanAt.Add(-48 * time.Hour), LastUsed: scanAt.Add(-24 * time.Hour), Count: 3},
+	}
+	scan := BuildScan(current, lockfile.Lockfile{}, nil, used)
+
+	lf := find(t, scan, "live-srv").Findings[0]
+	cf := find(t, scan, "cold-srv").Findings[0]
+	if lf.Liveness != "live" {
+		t.Errorf("recently-invoked server's finding should be live, got %q", lf.Liveness)
+	}
+	if cf.Liveness != "unknown" {
+		t.Errorf("untracked server's finding should be unknown, got %q", cf.Liveness)
+	}
+	if lf.RiskRank <= cf.RiskRank {
+		t.Errorf("live finding rank (%d) should exceed dormant (%d)", lf.RiskRank, cf.RiskRank)
+	}
+}
+
+func TestBuildScanFindingLivenessUnknownForSkill(t *testing.T) {
+	scanAt := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	// A skill shares a name with a used server; it must NOT inherit liveness —
+	// telemetry joins by MCP server name only.
+	skill := art("s1", "claude-code", artifact.TypeSkill, "shared", "sha256-x")
+	skill.Findings = []finding.Finding{{RuleID: "R1", Severity: finding.SeverityMedium, Explanation: "x"}}
+	current := lockfile.Build([]artifact.Artifact{skill}, scanAt, "assay/test")
+	used := map[string]usage.Stat{"shared": {LastUsed: scanAt, Count: 99}}
+	got := find(t, BuildScan(current, lockfile.Lockfile{}, nil, used), "shared").Findings[0]
+	if got.Liveness != "unknown" {
+		t.Errorf("a skill must not inherit MCP telemetry by name, got %q", got.Liveness)
+	}
+}
+
 func TestBuildScanCapabilityDiff(t *testing.T) {
 	locked := art("c1", "claude-code", artifact.TypeSkill, "grower", "sha256-old")
 	locked.Capabilities = artifact.Capabilities{Network: []string{"api.openai.com"}}

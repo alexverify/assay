@@ -44,6 +44,12 @@ export interface Finding {
   location: string // file + line
   ruleId?: string
   owasp?: string
+
+  // Capability × usage fusion (F3): how exercised the carrying artifact is, and
+  // the fused urgency rank. A finding on code that actually ran outranks the
+  // same finding on dormant code. Absent on artifacts with no telemetry path.
+  liveness?: "live" | "exercised" | "unknown"
+  riskRank?: number
 }
 
 export interface Capabilities {
@@ -268,6 +274,7 @@ export const artifacts: Artifact[] = [
           "A tool parameter is passed to an outbound fetch without host allowlisting, matching the SSRF class found in 36.7% of analyzed MCP servers (BlueRock).",
         evidence: "await fetch(args.callbackUrl)",
         location: "server/tools/webhook.ts:23",
+        liveness: "live",
       },
     ],
   },
@@ -397,6 +404,7 @@ export const artifacts: Artifact[] = [
           "Server is configured with a root of '/' rather than the project workspace, granting the agent read access to the entire filesystem.",
         evidence: '"allowedRoots": ["/"]',
         location: "mcp.config.json:8",
+        liveness: "live",
       },
     ],
   },
