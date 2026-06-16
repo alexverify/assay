@@ -71,6 +71,11 @@ type Deps struct {
 	// Reputation loads the opt-in community trust corpus (H3), keyed by content
 	// hash. Optional: when nil, no reputation signal is shown.
 	Reputation func() (reputation.Source, error)
+	// Blobs returns the captured bytes (path → content) for a content hash,
+	// backing the line-level drift diff (H1b), or nil when that hash has no
+	// stored baseline. Optional: when nil, the scan view falls back to the
+	// content-free file-name list.
+	Blobs func(contentHash string) (map[string][]byte, error)
 	// Static overrides the embedded UI assets (used in tests); nil uses the
 	// embedded Next.js export.
 	Static fs.FS
@@ -170,9 +175,11 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err)
 		return
 	}
+	arts := BuildScan(current, locked, s.approvedSet(locked), s.usageSummary(), s.reputationSource())
+	AttachLineDiffs(arts, s.deps.Blobs)
 	writeJSON(w, struct {
 		Artifacts []DashArtifact `json:"artifacts"`
-	}{Artifacts: BuildScan(current, locked, s.approvedSet(locked), s.usageSummary(), s.reputationSource())})
+	}{Artifacts: arts})
 }
 
 // reputationSource loads the opt-in community reputation corpus (H3). A nil dep

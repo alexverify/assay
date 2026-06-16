@@ -13,6 +13,7 @@ import (
 	"github.com/alexverify/assay/internal/adapters/lockstore"
 	"github.com/alexverify/assay/internal/adapters/policystore"
 	"github.com/alexverify/assay/internal/adapters/repstore"
+	"github.com/alexverify/assay/internal/adapters/snapshotstore"
 	"github.com/alexverify/assay/internal/app/ports"
 	"github.com/alexverify/assay/internal/dashboard"
 	"github.com/alexverify/assay/internal/domain/audit"
@@ -35,6 +36,7 @@ func (a *App) runDashboard(ctx context.Context, args []string) int {
 	historyPath := fs.String("history", a.historyPath(), "posture-trend history file")
 	fleetDir := fs.String("fleet-dir", a.fleetDir(), "shared fleet-snapshot directory (blast radius)")
 	reputationPath := fs.String("reputation", "assay.reputation.json", "opt-in community reputation corpus (hash-keyed; absent = no signal)")
+	snapshotDir := fs.String("snapshot-dir", a.snapshotDir(), "content-addressed store of approved file bytes (line-level drift diff)")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -109,6 +111,7 @@ func (a *App) runDashboard(ctx context.Context, args []string) int {
 		Reputation: func() (reputation.Source, error) {
 			return repstore.Load(*reputationPath)
 		},
+		Blobs: snapshotstore.New(*snapshotDir).Get,
 	})
 
 	ln, err := net.Listen("tcp", *addr)

@@ -12,6 +12,7 @@ import (
 	"github.com/alexverify/assay/internal/domain/reach"
 	"github.com/alexverify/assay/internal/domain/reputation"
 	"github.com/alexverify/assay/internal/domain/risk"
+	"github.com/alexverify/assay/internal/domain/textdiff"
 	"github.com/alexverify/assay/internal/domain/timeline"
 	"github.com/alexverify/assay/internal/domain/trust"
 	"github.com/alexverify/assay/internal/domain/usage"
@@ -70,6 +71,11 @@ type DashArtifact struct {
 	// offline core of the rug-pull diff view. nil when there is nothing to diff.
 	FileChanges *lockfile.FileDiff `json:"fileChanges,omitempty"`
 
+	// LineDiffs is the literal line-level change per file (H1b): the added/removed
+	// lines of a drift, when the approved and current bytes are both in the local
+	// blob store. Empty when the store has no baseline (degrades to FileChanges).
+	LineDiffs []DashLineDiff `json:"lineDiffs,omitempty"`
+
 	// Usage is the runtime invocation summary (F1): when this artifact last ran,
 	// when it first ran, and how many times. Sourced from the MCP shim's audit
 	// log, joined by server name; nil for artifacts with no telemetry path yet
@@ -88,6 +94,16 @@ type DashArtifact struct {
 	// hash (H3): how many other users trust it and when it was first seen. nil
 	// when the corpus is absent or has no entry (unknown, never a negative claim).
 	Reputation *DashReputation `json:"reputation,omitempty"`
+}
+
+// DashLineDiff is the line-level change in one file of a drift (H1b): the actual
+// `+`/`-` lines an auditor reads to confirm a rug pull, grouped into hunks.
+type DashLineDiff struct {
+	Path    string          `json:"path"`
+	Status  string          `json:"status"` // modified | added | removed
+	Added   int             `json:"added"`
+	Removed int             `json:"removed"`
+	Hunks   []textdiff.Hunk `json:"hunks"`
 }
 
 // DashReputation is the per-artifact community trust signal (H3).
@@ -289,6 +305,70 @@ func fileChanges(hasLocked bool, prev, cur []artifact.FileRef) *lockfile.FileDif
 		return nil
 	}
 	return &d
+}
+
+// AttachLineDiffs enriches the dashboard view with the line-level drift diff
+// (H1b) for any artifact whose drift changed files, when the approved (locked)
+// and current bytes are both available in the blob store. get returns a content
+// hash's files (path → bytes), or nil when that hash was never captured. Any
+// missing side degrades silently to the file-name list already in FileChanges —
+// the line diff is an enhancement, never a requirement. Pure given get; the IO
+// lives behind it.
+func AttachLineDiffs(arts []DashArtifact, get func(contentHash string) (map[string][]byte, error)) {
+	if get == nil {
+		return
+	}
+	for i := range arts {
+		a := &arts[i]
+		if a.FileChanges == nil || a.LockedHash == "" || a.Hash == "" || a.LockedHash == a.Hash {
+			continue
+		}
+		oldFiles, err := get(a.LockedHash)
+		if err != nil || oldFiles == nil {
+			continue
+		}
+		newFiles, err := get(a.Hash)
+		if err != nil || newFiles == nil {
+			continue
+		}
+		a.LineDiffs = lineDiffs(a.FileChanges, oldFiles, newFiles)
+	}
+}
+
+// lineDiffs builds the per-file line diff for a drift from the captured bytes.
+// A file missing from the store on a needed side (binary, oversized, or never
+// captured) is skipped, leaving it to the file-name list. Hunks carry 3 lines
+// of context around each change.
+func lineDiffs(fc *lockfile.FileDiff, oldFiles, newFiles map[string][]byte) []DashLineDiff {
+	var out []DashLineDiff
+	add := func(path, status string, oldB, newB []byte) {
+		lines := textdiff.Lines(string(oldB), string(newB))
+		hunks := textdiff.Hunks(lines, 3)
+		if len(hunks) == 0 {
+			return
+		}
+		st := textdiff.Count(lines)
+		out = append(out, DashLineDiff{Path: path, Status: status, Added: st.Added, Removed: st.Removed, Hunks: hunks})
+	}
+	for _, p := range fc.Modified {
+		o, okO := oldFiles[p]
+		n, okN := newFiles[p]
+		if !okO || !okN {
+			continue // need both sides to show a content diff
+		}
+		add(p, "modified", o, n)
+	}
+	for _, p := range fc.Added {
+		if n, ok := newFiles[p]; ok {
+			add(p, "added", nil, n)
+		}
+	}
+	for _, p := range fc.Removed {
+		if o, ok := oldFiles[p]; ok {
+			add(p, "removed", o, nil)
+		}
+	}
+	return out
 }
 
 // usageOf joins runtime invocation telemetry to an artifact (F1) and runs the
