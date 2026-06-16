@@ -245,18 +245,30 @@ Usage telemetry has two feeds, both keyed by artifact name and folded by
 and subagent invocation. This extends usage, the sleeper signal, the
 live-finding ranking, and the timeline to non-MCP kinds without any new join.
 
-## Roadmap seams (hosted control plane)
+## Team control plane (self-hostable)
 
-Documented, not yet built. Each plugs into the same model:
+The first slice (4a) is built: a self-hostable team server that ingests
+content-free fleet snapshots and serves the aggregated blast-radius, reusing the
+exact pure functions the local dashboard uses.
 
-- **`internal/client`, `controlplane/`** — the hosted team control plane (policy
-  pull, lockfile submission, audit ingest, a multi-tenant API). The local
-  dashboard's `BuildScan` / fleet aggregation is the same shape a hosted backend
-  would serve.
-- **`packaging/`** — release tooling beyond GoReleaser (Homebrew, install.sh,
-  npm shim).
+- **`internal/controlplane`** — the server: a `Service` (`Submit`/`Fleet`) over a
+  `Store` port, an HTTP handler (`POST /v1/snapshots`, `GET /v1/fleet`,
+  `/v1/healthz`), and machine bearer-token auth scoping every request to one org.
+  `Fleet` is just `fleet.Aggregate` over the org's snapshots, so a hosted report
+  is byte-identical to the local one.
+- **`internal/adapters/cpstore`** — the zero-dependency default persistence: one
+  JSON snapshot per owner under `<dir>/<org>/<owner>.json`. A Postgres adapter
+  can replace it behind the same `Store` port for scale.
+- **`internal/client`** — the opt-in CLI client (`Submit`/`Fleet`/`Health`); any
+  error is the caller's signal to fall back to the local path.
+- CLI: `assay serve` runs the server; `assay fleet push` submits this machine's
+  snapshot; `assay fleet --server …` reads the org report with the same renderer
+  as the local view.
 
-See each directory's `README.md` / `doc.go` for the specific seam.
+Remaining slices (still seams): policy & trusted-keys pull, hosted CI gate,
+audit/usage ingest + alerts, the web dashboard on hosted data, and the live
+hash-only reputation lookup (H3b). **`packaging/`** — release tooling beyond
+GoReleaser — is also still a seam. See each directory's `README.md` / `doc.go`.
 
 ## Design principles
 

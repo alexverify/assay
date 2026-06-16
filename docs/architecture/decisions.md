@@ -118,6 +118,29 @@ hand-rolled LCS for the same reason the rest of the core is dependency-free —
 but a *bounded* line differ, not a parser, so the correctness bar that justified
 the TOML dependency does not apply here.
 
+## The control plane is a self-hostable binary that reuses the pure core
+
+The team server (`internal/controlplane`, slice 4a) is a *self-hostable single
+binary* (`assay serve`), not a managed SaaS. That matches the run-it-yourself,
+auditable ethos and defers the hardest SaaS concerns (billing, residency, our
+own breach surface); a multi-tenant SaaS later is the same binary with tenancy
+on by default. It is written in Go specifically so the server's `Fleet` endpoint
+is literally `fleet.Aggregate` over the org's snapshots — the hosted report is
+byte-identical to the local one, and there is no second language/dependency tree
+to audit.
+
+Two deliberate choices keep it honest. **Persistence defaults to a
+zero-dependency file store** (`internal/adapters/cpstore`, one JSON per machine)
+in the same "files are the backend" spirit as the rest of assay; Postgres is a
+future adapter behind the same `Store` port, for scale, not a baseline
+requirement — so `serve` adds no dependency to the shipped binary. **Auth is a
+machine bearer token scoping each request to one org** (constant-time compare,
+row-level isolation); OIDC for humans and admin token management come with the
+web slice. The whole thing is opt-in and additive: the CLI never requires a
+server, the submitted snapshot is content-free (the same bytes `fleet export`
+commits), and any client error falls back to the local path — the advisory-feed
+contract, now over HTTP.
+
 ## The fleet CI gate reuses the dashboard's pure rollups
 
 `assay fleet verify` enforces what the dashboard's Fleet tab shows. Rather than

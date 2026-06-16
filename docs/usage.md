@@ -339,6 +339,32 @@ is **opt-in and hash-only**: a content-hash → trust-count corpus you choose to
 trust. A lookup is a local map lookup, so no hash ever leaves your machine; an
 absent corpus is a silent no-op and a miss is "unknown," never a negative claim.
 
+### Hosted control plane (opt-in, beyond ~15 people)
+
+"Git is the backend" caps cleanly at a small team sharing a repo. Past that, run
+the self-hostable control plane: it ingests the same content-free snapshots over
+HTTP and serves the same aggregated blast-radius. Everything stays optional — the
+CLI works fully offline, and a client error falls back to the local path.
+
+```sh
+# on the server (a machine your team can reach)
+echo '{"sek-alice":"acme","sek-bob":"acme"}' > tokens.json   # machine token → org
+assay serve --addr 0.0.0.0:7140 --tokens tokens.json         # file-backed store under ~/.assay/controlplane
+
+# on each developer's machine (or in CI)
+export ASSAY_SERVER=https://assay.acme.internal:7140
+export ASSAY_TOKEN=sek-alice
+assay fleet push            # submit this machine's snapshot
+assay fleet --server "$ASSAY_SERVER" --token "$ASSAY_TOKEN"   # read the org blast-radius
+```
+
+A bearer token scopes every request to one org (row-level isolation). The
+snapshot is content-free, exactly what `fleet export` would commit — ids, hashes,
+and drift/verdict, never code or secrets. The default store is the zero-dependency
+file backend (one JSON per machine); a Postgres adapter for scale slots in behind
+the same interface. Policy/keys pull, audit ingest, a hosted dashboard, and live
+reputation lookup are the remaining (designed) slices.
+
 ## Exit codes (stable contract)
 
 `0` clean · `1` drift or policy violation · `2` usage error · `3` internal
