@@ -11,6 +11,7 @@ import (
 	"github.com/alexverify/assay/internal/adapters/lockstore"
 	"github.com/alexverify/assay/internal/adapters/policystore"
 	"github.com/alexverify/assay/internal/app/ports"
+	"github.com/alexverify/assay/internal/client"
 	"github.com/alexverify/assay/internal/dashboard"
 	"github.com/alexverify/assay/internal/domain/fleet"
 	"github.com/alexverify/assay/internal/domain/lockfile"
@@ -34,6 +35,8 @@ func (a *App) runFleet(ctx context.Context, args []string) int {
 	dir := fs.String("dir", a.fleetDir(), "shared fleet-snapshot directory")
 	owner := fs.String("owner", "", "snapshot owner label (default: hostname)")
 	policyPath := fs.String("policy", "assay.policy.json", "policy file for conformance (show)")
+	server := fs.String("server", envOr("ASSAY_SERVER", ""), "control-plane URL (opt-in; overrides the local dir for push/show)")
+	token := fs.String("token", envOr("ASSAY_TOKEN", ""), "machine token for the control plane")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -41,12 +44,17 @@ func (a *App) runFleet(ctx context.Context, args []string) int {
 	switch sub {
 	case "export":
 		return a.fleetExport(ctx, c, *dir, *owner)
+	case "push":
+		return a.fleetPush(ctx, c, *server, *token, *owner)
 	case "", "show", "status":
+		if *server != "" {
+			return a.fleetShowRemote(ctx, *server, *token)
+		}
 		return a.fleetShow(*dir, *policyPath)
 	case "verify":
 		return a.fleetVerify(*dir, *policyPath)
 	default:
-		fmt.Fprintf(a.Stderr, "fleet: unknown subcommand %q (want: export | show | verify)\n", sub)
+		fmt.Fprintf(a.Stderr, "fleet: unknown subcommand %q (want: export | push | show | verify)\n", sub)
 		return ExitUsage
 	}
 }
@@ -94,34 +102,73 @@ func (a *App) fleetVerify(dir, policyPath string) int {
 	return ExitDrift
 }
 
-// fleetExport builds this machine's snapshot from the live inventory joined with
-// the lockfile (reusing the dashboard's drift/verdict interpretation) and writes
-// it to the shared directory.
-func (a *App) fleetExport(ctx context.Context, c commonFlags, dir, owner string) int {
+// buildSnapshot assembles this machine's content-free snapshot from the live
+// inventory joined with the lockfile (reusing the dashboard's drift/verdict
+// interpretation). Shared by export (write to a dir) and push (send to a server).
+func (a *App) buildSnapshot(ctx context.Context, c commonFlags, owner string) (fleet.Snapshot, error) {
 	current, err := a.scanService(*c.json, *c.rules).Build(ctx, a.scopes(*c.path, *c.global))
 	if err != nil {
-		fmt.Fprintf(a.Stderr, "fleet: %v\n", err)
-		return ExitError
+		return fleet.Snapshot{}, err
 	}
 	locked, err := lockstore.New().Read(ctx, *c.lockfile)
 	if err != nil && !errors.Is(err, ports.ErrNoLockfile) {
-		fmt.Fprintf(a.Stderr, "fleet: %v\n", err)
-		return ExitError
+		return fleet.Snapshot{}, err
 	}
-
 	if owner == "" {
 		owner = hostname()
 	}
-	snap := fleet.Snapshot{
+	return fleet.Snapshot{
 		Owner:       owner,
 		GeneratedAt: a.Clock.Now().UTC(),
 		Artifacts:   snapshotArtifacts(current, locked),
+	}, nil
+}
+
+// fleetExport writes this machine's snapshot to the shared directory ("git is
+// the backend").
+func (a *App) fleetExport(ctx context.Context, c commonFlags, dir, owner string) int {
+	snap, err := a.buildSnapshot(ctx, c, owner)
+	if err != nil {
+		fmt.Fprintf(a.Stderr, "fleet: %v\n", err)
+		return ExitError
 	}
 	if err := fleetstore.Write(dir, snap); err != nil {
 		fmt.Fprintf(a.Stderr, "fleet: %v\n", err)
 		return ExitError
 	}
-	fmt.Fprintf(a.Stdout, "wrote fleet snapshot for %q: %d artifacts → %s\n", owner, len(snap.Artifacts), dir)
+	fmt.Fprintf(a.Stdout, "wrote fleet snapshot for %q: %d artifacts → %s\n", snap.Owner, len(snap.Artifacts), dir)
+	return ExitOK
+}
+
+// fleetPush submits this machine's snapshot to the control plane (the hosted
+// alternative to committing it). Opt-in: it runs only when a server is set.
+func (a *App) fleetPush(ctx context.Context, c commonFlags, server, token, owner string) int {
+	if server == "" {
+		fmt.Fprintln(a.Stderr, "fleet push: set --server (or ASSAY_SERVER) to a control-plane URL")
+		return ExitUsage
+	}
+	snap, err := a.buildSnapshot(ctx, c, owner)
+	if err != nil {
+		fmt.Fprintf(a.Stderr, "fleet: %v\n", err)
+		return ExitError
+	}
+	if err := client.New(server, token).Submit(ctx, snap); err != nil {
+		fmt.Fprintf(a.Stderr, "fleet push: %v\n", err)
+		return ExitError
+	}
+	fmt.Fprintf(a.Stdout, "pushed fleet snapshot for %q: %d artifacts → %s\n", snap.Owner, len(snap.Artifacts), server)
+	return ExitOK
+}
+
+// fleetShowRemote reads the org's aggregated blast-radius from the control plane
+// and prints it with the same renderer as the local view.
+func (a *App) fleetShowRemote(ctx context.Context, server, token string) int {
+	rep, err := client.New(server, token).Fleet(ctx)
+	if err != nil {
+		fmt.Fprintf(a.Stderr, "fleet: %v\n", err)
+		return ExitError
+	}
+	a.printFleetReport(rep)
 	return ExitOK
 }
 
@@ -138,20 +185,7 @@ func (a *App) fleetShow(dir, policyPath string) int {
 		return ExitOK
 	}
 	r := fleet.Aggregate(snaps)
-	fmt.Fprintf(a.Stdout, "fleet: %d machines, %d distinct artifacts\n\n", r.Owners, r.Artifacts)
-	for _, e := range r.Exposures {
-		risk := ""
-		if e.Drifted > 0 {
-			risk += fmt.Sprintf("  ⚠ drifted on %d/%d", e.Drifted, e.Installs)
-		}
-		if e.Quarantine > 0 {
-			risk += fmt.Sprintf("  ⛔ quarantine on %d/%d", e.Quarantine, e.Installs)
-		}
-		if e.Variants > 1 {
-			risk += fmt.Sprintf("  %d variants", e.Variants)
-		}
-		fmt.Fprintf(a.Stdout, "%-28s %-8s %d/%d machines%s\n", e.Name, e.Kind, e.Installs, r.Owners, risk)
-	}
+	a.printFleetReport(r)
 
 	// Policy conformance (G3): who is out of compliance with the committed policy.
 	if p, _, err := policystore.Load(policyPath); err == nil {
@@ -189,7 +223,34 @@ func snapshotArtifacts(current, locked lockfile.Lockfile) []fleet.Artifact {
 	return out
 }
 
+// printFleetReport renders a blast-radius report, shared by the local and
+// remote (control-plane) fleet views so they read identically.
+func (a *App) printFleetReport(r fleet.Report) {
+	fmt.Fprintf(a.Stdout, "fleet: %d machines, %d distinct artifacts\n\n", r.Owners, r.Artifacts)
+	for _, e := range r.Exposures {
+		risk := ""
+		if e.Drifted > 0 {
+			risk += fmt.Sprintf("  ⚠ drifted on %d/%d", e.Drifted, e.Installs)
+		}
+		if e.Quarantine > 0 {
+			risk += fmt.Sprintf("  ⛔ quarantine on %d/%d", e.Quarantine, e.Installs)
+		}
+		if e.Variants > 1 {
+			risk += fmt.Sprintf("  %d variants", e.Variants)
+		}
+		fmt.Fprintf(a.Stdout, "%-28s %-8s %d/%d machines%s\n", e.Name, e.Kind, e.Installs, r.Owners, risk)
+	}
+}
+
 func isFlag(s string) bool { return len(s) > 0 && s[0] == '-' }
+
+// envOr returns the environment value for key, or fallback when unset/empty.
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
 
 func hostname() string {
 	h, err := os.Hostname()

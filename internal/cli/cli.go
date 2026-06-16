@@ -91,6 +91,8 @@ func (a *App) Execute(ctx context.Context, args []string) int {
 		return a.runDashboard(ctx, rest)
 	case "fleet":
 		return a.runFleet(ctx, rest)
+	case "serve":
+		return a.runServe(ctx, rest)
 	case "mcp-shim":
 		return a.runMCPShim(ctx, rest)
 	case "version", "-v", "--version":
@@ -130,7 +132,8 @@ Commands:
   record-use   Record an artifact activation (called by a host-tool hook)
   install-hooks Install host-tool hooks that feed usage telemetry (--status, --uninstall)
   dashboard Serve a local read-only web dashboard (loopback)
-  fleet     Export this machine's snapshot, print the team blast-radius, or verify (CI gate)
+  fleet     Export/push this machine's snapshot, print the team blast-radius, or verify (CI gate)
+  serve     Run the self-hostable team control plane (opt-in; ingests snapshots)
   version   Print the version
   help      Show this help
 
