@@ -19,6 +19,7 @@ import (
 	"github.com/alexverify/assay/internal/adapters/report"
 	"github.com/alexverify/assay/internal/adapters/resolve"
 	"github.com/alexverify/assay/internal/adapters/sign"
+	"github.com/alexverify/assay/internal/adapters/snapshotstore"
 	"github.com/alexverify/assay/internal/app/ports"
 	"github.com/alexverify/assay/internal/app/scan"
 	"github.com/alexverify/assay/internal/app/verify"
@@ -166,6 +167,7 @@ func (a *App) scanService(jsonOut bool, rulesDir string) *scan.Service {
 		Lock:       lockstore.New(),
 		Reporter:   reporter(jsonOut),
 		Clock:      a.Clock,
+		Snapshots:  snapshotstore.New(a.snapshotDir()),
 	})
 }
 
@@ -190,6 +192,13 @@ func (a *App) verifyService(jsonOut bool, rulesDir string, verifier ports.Lockfi
 func (a *App) auditDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".assay", "audit")
+}
+
+// snapshotDir is the default content-addressed store of approved file bytes,
+// backing the dashboard's line-level drift diff (H1b). Project-local and
+// gitignored: a local cache of baselines, not part of the signed lockfile.
+func (a *App) snapshotDir() string {
+	return filepath.Join(".assay", "snapshots")
 }
 
 // fleetDir is the default fleet-snapshot directory: a project-local, shared

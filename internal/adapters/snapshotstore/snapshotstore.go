@@ -13,14 +13,23 @@
 package snapshotstore
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/alexverify/assay/internal/domain/textdiff"
 )
 
 const manifestName = "files.json"
+
+// maxFileBytes caps the size of a single captured file. The line diff is for
+// human-readable source; a giant or generated file is not worth the disk, so it
+// is skipped (the diff degrades to the file-name list for it).
+const maxFileBytes = 256 * 1024
 
 // Store roots a blob store at a directory (e.g. .assay/snapshots).
 type Store struct{ dir string }
@@ -78,6 +87,70 @@ func (s *Store) Get(contentHash string) (map[string][]byte, error) {
 		out[path] = b
 	}
 	return out, nil
+}
+
+// Capture walks an artifact's root on disk and stores the bytes of its text
+// files under the given content hash, so a later drift can be shown line by
+// line. It satisfies ports.SnapshotSink. Capture is idempotent and content-
+// addressed: a hash already stored is skipped without re-reading the tree.
+// Binary, oversized, and .git files are skipped (the diff degrades to the
+// file-name list for those). Paths are POSIX-relative to root, matching the
+// lockfile's FileRefs.
+func (s *Store) Capture(_ context.Context, contentHash, root string) error {
+	if contentHash == "" || s.Has(contentHash) {
+		return nil
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return err
+	}
+	files := map[string][]byte{}
+	if !info.IsDir() {
+		if b, ok := readText(root); ok {
+			files[filepath.Base(root)] = b
+		}
+		return s.Put(contentHash, files)
+	}
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if b, ok := readText(path); ok {
+			files[filepath.ToSlash(rel)] = b
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return walkErr
+	}
+	return s.Put(contentHash, files)
+}
+
+// readText reads a file, returning its bytes only if it is a reasonably sized,
+// non-binary file worth diffing.
+func readText(path string) ([]byte, bool) {
+	fi, err := os.Stat(path)
+	if err != nil || fi.Size() > maxFileBytes {
+		return nil, false
+	}
+	b, err := os.ReadFile(path)
+	if err != nil || textdiff.Binary(string(b)) {
+		return nil, false
+	}
+	return b, true
 }
 
 // Has reports whether a content hash has a stored blob.

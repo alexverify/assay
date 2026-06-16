@@ -29,7 +29,8 @@ type Deps struct {
 	Lock       ports.LockStore
 	Reporter   ports.Reporter
 	Clock      ports.Clock
-	Generator  string // recorded in the lockfile; defaults to the build UA
+	Snapshots  ports.SnapshotSink // optional: capture file bytes for the H1b line diff
+	Generator  string             // recorded in the lockfile; defaults to the build UA
 }
 
 // Service orchestrates the scan pipeline.
@@ -144,6 +145,12 @@ func (s *Service) enrich(ctx context.Context, a *artifact.Artifact) error {
 		a.ContentHash = hash
 		a.Files = files
 		a.ModifiedAt = modTime
+
+		// Capture the bytes for the line-level drift diff (H1b). Best-effort:
+		// the diff is an enhancement, so a capture error never fails the scan.
+		if s.deps.Snapshots != nil {
+			_ = s.deps.Snapshots.Capture(ctx, hash, res.LocalPath)
+		}
 
 		fs, err := s.deps.Analyzer.Analyze(ctx, *a, res.LocalPath)
 		if err != nil {

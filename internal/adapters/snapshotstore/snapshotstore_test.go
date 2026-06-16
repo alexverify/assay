@@ -2,9 +2,69 @@ package snapshotstore
 
 import (
 	"bytes"
+	"context"
+	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestCaptureWalksTextFilesSkipsBinaryAndGit(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.go"), []byte("package main\n"))
+	mustWrite(t, filepath.Join(root, "sub", "a.py"), []byte("print(1)\n"))
+	mustWrite(t, filepath.Join(root, "logo.png"), []byte{0x89, 0x50, 0x00, 0x01}) // binary → skipped
+	mustWrite(t, filepath.Join(root, ".git", "config"), []byte("[core]\n"))       // .git → skipped
+
+	s := New(t.TempDir())
+	if err := s.Capture(context.Background(), "sha256-cap", root); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get("sha256-cap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["main.go"]; !ok {
+		t.Errorf("main.go should be captured")
+	}
+	if _, ok := got["sub/a.py"]; !ok {
+		t.Errorf("nested sub/a.py should be captured with a POSIX path")
+	}
+	if _, ok := got["logo.png"]; ok {
+		t.Errorf("binary file must be skipped")
+	}
+	if _, ok := got[".git/config"]; ok {
+		t.Errorf(".git contents must be skipped")
+	}
+}
+
+func TestCaptureIdempotentByHash(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "f.txt"), []byte("v1\n"))
+	s := New(t.TempDir())
+	if err := s.Capture(context.Background(), "h", root); err != nil {
+		t.Fatal(err)
+	}
+	// Change the file but reuse the hash: content-addressed, so Capture is a
+	// no-op and the original bytes are preserved.
+	mustWrite(t, filepath.Join(root, "f.txt"), []byte("v2-tampered\n"))
+	if err := s.Capture(context.Background(), "h", root); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get("h")
+	if string(got["f.txt"]) != "v1\n" {
+		t.Errorf("a stored hash must not be re-captured, got %q", got["f.txt"])
+	}
+}
+
+func mustWrite(t *testing.T, path string, b []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestPutGetRoundTrip(t *testing.T) {
 	s := New(t.TempDir())

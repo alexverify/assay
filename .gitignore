@@ -17,5 +17,9 @@ coverage.*
 # Local lockfiles produced during manual testing
 /assaylock.json
 
+# Content-addressed cache of approved file bytes (line-diff baselines, H1b);
+# a local cache, not part of the signed lockfile
+/.assay/snapshots/
+
 # Local-only working docs (specs/plans); never committed
 docs/superpowers/

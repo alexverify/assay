@@ -80,6 +80,14 @@ type Hasher interface {
 	Hash(ctx context.Context, root string) (contentHash string, files []artifact.FileRef, modTime time.Time, err error)
 }
 
+// SnapshotSink captures the bytes of an artifact's files, keyed by its content
+// hash, so the dashboard can later show the literal line-level diff of a drift
+// (H1b). It is optional: a nil sink disables capture, and any capture error is
+// non-fatal (the line diff is an enhancement, never a scan dependency).
+type SnapshotSink interface {
+	Capture(ctx context.Context, contentHash, root string) error
+}
+
 // Analyzer runs static analysis over an artifact's resolved code, returning
 // findings mapped to the OWASP taxonomy. Analyze scans a directory or file on
 // disk; AnalyzeContent scans an in-memory blob (e.g. an inline hook command
