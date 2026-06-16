@@ -41,6 +41,18 @@ type Policy struct {
 	// MCP constrains tool calls at runtime, enforced by the mcp-shim
 	// (see DecideTool in mcp.go). Not used by verify.
 	MCP MCPPolicy `json:"mcp,omitempty"`
+	// Fleet configures the team-wide CI gate (`assay fleet verify`). Not used by
+	// the single-machine verify.
+	Fleet FleetPolicy `json:"fleet,omitempty"`
+}
+
+// FleetPolicy tunes the cross-machine CI gate. It lives in the committed policy
+// so the team reviews the threshold like any other rule.
+type FleetPolicy struct {
+	// MaxBlastRadius fails the fleet gate when a drifted or quarantined artifact
+	// is installed on more than this many machines. Zero disables the reach
+	// check (machine conformance still gates).
+	MaxBlastRadius int `json:"maxBlastRadius,omitempty"`
 }
 
 // Mute suppresses a finding rule with a recorded rationale. It suppresses the

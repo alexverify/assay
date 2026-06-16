@@ -129,7 +129,7 @@ Commands:
   record-use   Record an artifact activation (called by a host-tool hook)
   install-hooks Install host-tool hooks that feed usage telemetry (--status, --uninstall)
   dashboard Serve a local read-only web dashboard (loopback)
-  fleet     Export this machine's snapshot, or print the team blast-radius
+  fleet     Export this machine's snapshot, print the team blast-radius, or verify (CI gate)
   version   Print the version
   help      Show this help
 

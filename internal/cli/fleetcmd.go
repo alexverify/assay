@@ -43,10 +43,55 @@ func (a *App) runFleet(ctx context.Context, args []string) int {
 		return a.fleetExport(ctx, c, *dir, *owner)
 	case "", "show", "status":
 		return a.fleetShow(*dir, *policyPath)
+	case "verify":
+		return a.fleetVerify(*dir, *policyPath)
 	default:
-		fmt.Fprintf(a.Stderr, "fleet: unknown subcommand %q (want: export | show)\n", sub)
+		fmt.Fprintf(a.Stderr, "fleet: unknown subcommand %q (want: export | show | verify)\n", sub)
 		return ExitUsage
 	}
+}
+
+// fleetVerify is the CI gate over the fleet: it aggregates every snapshot,
+// checks each machine against the committed policy, and applies the blast-radius
+// threshold, exiting 1 (the stable drift/policy code) on any failure. It is a
+// read-only rollup over the same pure functions the dashboard uses, so a CI
+// failure matches exactly what a teammate sees in `assay fleet`.
+func (a *App) fleetVerify(dir, policyPath string) int {
+	snaps, err := fleetstore.Read(dir)
+	if err != nil {
+		fmt.Fprintf(a.Stderr, "fleet: %v\n", err)
+		return ExitError
+	}
+	if len(snaps) == 0 {
+		fmt.Fprintf(a.Stdout, "fleet verify: no snapshots in %s — nothing to gate\n", dir)
+		return ExitOK
+	}
+
+	pol, _, err := policystore.Load(policyPath)
+	if err != nil {
+		fmt.Fprintf(a.Stderr, "fleet: %v\n", err)
+		return ExitError
+	}
+
+	rep := fleet.Aggregate(snaps)
+	con := fleet.CheckConformance(pol, snaps)
+	res := fleet.Gate(rep, con, pol.Fleet.MaxBlastRadius)
+
+	if res.OK {
+		fmt.Fprintf(a.Stdout, "fleet verify: %d machines in policy — clear\n", con.Owners)
+		return ExitOK
+	}
+
+	for _, m := range res.NonCompliant {
+		for _, v := range m.Violations {
+			fmt.Fprintf(a.Stdout, "fleet: %-10s %-24s %s\n", m.Owner, v.Name, strings.Join(v.Reasons, ", "))
+		}
+	}
+	for _, e := range res.BlastBreaches {
+		fmt.Fprintf(a.Stdout, "fleet: blast radius — %s (%s) drifted/quarantined on %d machine(s), over the limit of %d\n",
+			e.Name, e.Kind, max(e.Drifted, e.Quarantine), pol.Fleet.MaxBlastRadius)
+	}
+	return ExitDrift
 }
 
 // fleetExport builds this machine's snapshot from the live inventory joined with
