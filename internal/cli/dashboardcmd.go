@@ -36,13 +36,16 @@ func (a *App) runDashboard(ctx context.Context, args []string) int {
 	historyPath := fs.String("history", a.historyPath(), "posture-trend history file")
 	fleetDir := fs.String("fleet-dir", a.fleetDir(), "shared fleet-snapshot directory (blast radius)")
 	reputationPath := fs.String("reputation", "assay.reputation.json", "opt-in community reputation corpus (hash-keyed; absent = no signal)")
-	snapshotDir := fs.String("snapshot-dir", a.snapshotDir(), "content-addressed store of approved file bytes (line-level drift diff)")
+	snapshotDir := fs.String("snapshot-dir", "", "content-addressed store of approved file bytes (line-level drift diff); default <path>/.assay/snapshots")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
+	if *snapshotDir == "" {
+		*snapshotDir = a.snapshotDir(*c.path)
+	}
 
 	scopes := a.scopes(*c.path, *c.global)
-	builder := a.scanService(false, *c.rules)
+	builder := a.capturingScanService(false, *c.rules, *c.path)
 	store := lockstore.New()
 	// The keyring (committed trusted-keys + personal) verifies approval
 	// signatures so the dashboard's "verified" status is cryptographically real.

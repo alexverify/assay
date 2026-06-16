@@ -60,7 +60,7 @@ func (a *App) runScan(ctx context.Context, args []string) int {
 	// against the baseline scan is about to overwrite.
 	prior, _ := lockstore.New().Read(ctx, *c.lockfile)
 
-	svc := a.scanService(*c.json, *c.rules)
+	svc := a.capturingScanService(*c.json, *c.rules, *c.path)
 	lf, err := svc.Run(ctx, scan.Options{
 		Scopes:       a.scopes(*c.path, *c.global),
 		LockfilePath: *c.lockfile,

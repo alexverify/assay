@@ -167,7 +167,23 @@ func (a *App) scanService(jsonOut bool, rulesDir string) *scan.Service {
 		Lock:       lockstore.New(),
 		Reporter:   reporter(jsonOut),
 		Clock:      a.Clock,
-		Snapshots:  snapshotstore.New(a.snapshotDir()),
+	})
+}
+
+// capturingScanService is the scan service wired to also capture file bytes into
+// the project's blob store, backing the dashboard's line-level drift diff (H1b).
+// Only `scan` (recording the baseline) and the dashboard's live build use it; the
+// read-only commands (verify/diff/digest/list) do not write baselines.
+func (a *App) capturingScanService(jsonOut bool, rulesDir, projectPath string) *scan.Service {
+	return scan.New(scan.Deps{
+		Discoverer: discover.Default(),
+		Resolver:   resolve.NewRouter(),
+		Hasher:     hash.New(),
+		Analyzer:   analyze.NewChain(analyze.NewNative(), analyze.NewSemgrep(rulesDir)),
+		Lock:       lockstore.New(),
+		Reporter:   reporter(jsonOut),
+		Clock:      a.Clock,
+		Snapshots:  snapshotstore.New(a.snapshotDir(projectPath)),
 	})
 }
 
@@ -194,11 +210,12 @@ func (a *App) auditDir() string {
 	return filepath.Join(home, ".assay", "audit")
 }
 
-// snapshotDir is the default content-addressed store of approved file bytes,
-// backing the dashboard's line-level drift diff (H1b). Project-local and
-// gitignored: a local cache of baselines, not part of the signed lockfile.
-func (a *App) snapshotDir() string {
-	return filepath.Join(".assay", "snapshots")
+// snapshotDir is the content-addressed store of approved file bytes backing the
+// dashboard's line-level drift diff (H1b). It lives under the scanned project so
+// baselines stay project-local (and gitignored) — a local cache, not part of the
+// signed lockfile.
+func (a *App) snapshotDir(projectPath string) string {
+	return filepath.Join(projectPath, ".assay", "snapshots")
 }
 
 // fleetDir is the default fleet-snapshot directory: a project-local, shared
