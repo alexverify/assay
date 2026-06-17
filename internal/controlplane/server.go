@@ -9,6 +9,7 @@ import (
 	"github.com/alexverify/assay/internal/domain/alert"
 	"github.com/alexverify/assay/internal/domain/audit"
 	"github.com/alexverify/assay/internal/domain/fleet"
+	"github.com/alexverify/assay/internal/domain/reputation"
 )
 
 // maxBody caps a submission body. Snapshots are small (counts and hashes), so a
@@ -23,6 +24,7 @@ func NewServer(svc *Service, auth Auth) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/snapshots", h.submit)
 	mux.HandleFunc("POST /v1/audit", h.ingestAudit)
+	mux.HandleFunc("POST /v1/reputation", h.reputation)
 	mux.HandleFunc("GET /v1/fleet", h.fleet)
 	mux.HandleFunc("GET /v1/alerts", h.alerts)
 	mux.HandleFunc("GET /v1/gate", h.gate)
@@ -126,6 +128,30 @@ func (h *handler) gate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, res)
+}
+
+// reputation looks up a batch of content hashes in the org's corpus. The body
+// is a JSON array of hashes — a lookup sends only hashes the caller already
+// holds, and the response carries only matches.
+func (h *handler) reputation(w http.ResponseWriter, r *http.Request) {
+	org, ok := h.org(w, r)
+	if !ok {
+		return
+	}
+	var hashes []string
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxBody)).Decode(&hashes); err != nil {
+		http.Error(w, "bad hashes json", http.StatusBadRequest)
+		return
+	}
+	src, err := h.svc.Reputation(org, hashes)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if src == nil {
+		src = reputation.Source{}
+	}
+	writeJSON(w, src)
 }
 
 func (h *handler) policy(w http.ResponseWriter, r *http.Request) {

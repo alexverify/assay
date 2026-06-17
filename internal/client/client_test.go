@@ -11,6 +11,7 @@ import (
 	"github.com/alexverify/assay/internal/domain/audit"
 	"github.com/alexverify/assay/internal/domain/fleet"
 	"github.com/alexverify/assay/internal/domain/policy"
+	"github.com/alexverify/assay/internal/domain/reputation"
 )
 
 // liveServer spins up the real control-plane handler so the client is tested
@@ -115,6 +116,27 @@ func TestClientIngestAuditThenAlerts(t *testing.T) {
 	}
 	if len(alerts) < 2 {
 		t.Errorf("expected drift + egress alerts, got %+v", kinds)
+	}
+}
+
+func TestClientReputationLookup(t *testing.T) {
+	cfg := controlplane.NewMemConfig()
+	cfg.SetReputation("acme", reputation.Source{
+		"sha256-aaa": {Hash: "sha256-aaa", Trusters: 11},
+	})
+	srv := httptest.NewServer(controlplane.NewServer(
+		controlplane.NewService(controlplane.NewMemStore(), cfg), controlplane.StaticAuth{"tok": "acme"}))
+	t.Cleanup(srv.Close)
+
+	src, err := client.New(srv.URL, "tok").Reputation(context.Background(), []string{"sha256-aaa", "sha256-miss"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sig, ok := src.Lookup("sha256-aaa"); !ok || sig.Trusters != 11 {
+		t.Errorf("aaa = %+v ok=%v", sig, ok)
+	}
+	if _, ok := src.Lookup("sha256-miss"); ok {
+		t.Error("a miss must not resolve")
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/alexverify/assay/internal/domain/audit"
 	"github.com/alexverify/assay/internal/domain/fleet"
 	"github.com/alexverify/assay/internal/domain/policy"
+	"github.com/alexverify/assay/internal/domain/reputation"
 )
 
 // Client talks to a control-plane server. A zero base disables it; callers
@@ -124,6 +125,37 @@ func (c *Client) Alerts(ctx context.Context) ([]alert.Alert, error) {
 		return nil, err
 	}
 	return alerts, nil
+}
+
+// Reputation looks up the given content hashes in the org's reputation corpus
+// (H3b) and returns the matches as a Source. It sends only hashes the caller
+// already holds; an empty input is a no-op.
+func (c *Client) Reputation(ctx context.Context, hashes []string) (reputation.Source, error) {
+	if len(hashes) == 0 {
+		return reputation.Source{}, nil
+	}
+	body, err := json.Marshal(hashes)
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.request(ctx, http.MethodPost, "/v1/reputation", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := expect(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var src reputation.Source
+	if err := json.NewDecoder(resp.Body).Decode(&src); err != nil {
+		return nil, err
+	}
+	return src, nil
 }
 
 // Gate runs the fleet CI gate server-side over the org's submitted snapshots and
