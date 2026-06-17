@@ -133,6 +133,29 @@ func TestPolicyServedWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestGateEndpoint(t *testing.T) {
+	cfg := NewMemConfig()
+	cfg.SetPolicy("acme", policy.Policy{Fleet: policy.FleetPolicy{MaxBlastRadius: 1}})
+	h := NewServer(NewService(seededStore(), cfg), StaticAuth{"tok-acme": "acme"})
+	rec := do(t, h, "GET", "/v1/gate", "tok-acme", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("gate = %d", rec.Code)
+	}
+	var res fleet.GateResult
+	json.Unmarshal(rec.Body.Bytes(), &res)
+	if res.OK || len(res.BlastBreaches) != 1 {
+		t.Errorf("gate result = %+v", res)
+	}
+}
+
+// seededStore returns a store with a two-machine drift on the "acme" org.
+func seededStore() *MemStore {
+	s := NewMemStore()
+	s.PutSnapshot("acme", fleet.Snapshot{Owner: "alice", Artifacts: []fleet.Artifact{{ID: "x", Name: "feed", Hash: "h1", Drift: "drifted", Verdict: "review"}}})
+	s.PutSnapshot("acme", fleet.Snapshot{Owner: "bob", Artifacts: []fleet.Artifact{{ID: "x", Name: "feed", Hash: "h2", Drift: "drifted", Verdict: "review"}}})
+	return s
+}
+
 func TestPolicyAndKeysRequireAuth(t *testing.T) {
 	h := testHandler()
 	if rec := do(t, h, "GET", "/v1/policy", "", nil); rec.Code != http.StatusUnauthorized {

@@ -92,6 +92,35 @@ func TestPolicyAndKeysFromConfig(t *testing.T) {
 	}
 }
 
+func TestGateOverSubmittedSnapshots(t *testing.T) {
+	cfg := NewMemConfig()
+	cfg.SetPolicy("acme", policy.Policy{Fleet: policy.FleetPolicy{MaxBlastRadius: 1}})
+	svc := NewService(NewMemStore(), cfg)
+	// Two machines with the same artifact drifted → blast radius 2 > limit 1.
+	svc.Submit("acme", snap("alice", fleet.Artifact{ID: "x", Name: "feed", Hash: "h1", Drift: "drifted", Verdict: "review"}))
+	svc.Submit("acme", snap("bob", fleet.Artifact{ID: "x", Name: "feed", Hash: "h2", Drift: "drifted", Verdict: "review"}))
+
+	res, err := svc.Gate("acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.OK {
+		t.Fatal("a drift wider than the limit must fail the gate")
+	}
+	if len(res.BlastBreaches) != 1 || res.BlastBreaches[0].Name != "feed" {
+		t.Errorf("breaches = %+v", res.BlastBreaches)
+	}
+}
+
+func TestGateCleanFleetPasses(t *testing.T) {
+	svc := NewService(NewMemStore(), NewMemConfig())
+	svc.Submit("acme", snap("alice", fleet.Artifact{ID: "x", Name: "feed", Hash: "h", Drift: "verified", Verdict: "trusted"}))
+	res, err := svc.Gate("acme")
+	if err != nil || !res.OK {
+		t.Errorf("a clean fleet with no policy should pass: ok=%v err=%v", res.OK, err)
+	}
+}
+
 func TestUnconfiguredOrgAndNilConfig(t *testing.T) {
 	// An org with no policy → not configured (CLI stays local).
 	cfg := NewMemConfig()

@@ -21,6 +21,7 @@ func NewServer(svc *Service, auth Auth) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/snapshots", h.submit)
 	mux.HandleFunc("GET /v1/fleet", h.fleet)
+	mux.HandleFunc("GET /v1/gate", h.gate)
 	mux.HandleFunc("GET /v1/policy", h.policy)
 	mux.HandleFunc("GET /v1/registry/keys", h.keys)
 	mux.HandleFunc("GET /v1/healthz", h.health)
@@ -75,6 +76,19 @@ func (h *handler) fleet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, rep)
+}
+
+func (h *handler) gate(w http.ResponseWriter, r *http.Request) {
+	org, ok := h.org(w, r)
+	if !ok {
+		return
+	}
+	res, err := h.svc.Gate(org)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, res)
 }
 
 func (h *handler) policy(w http.ResponseWriter, r *http.Request) {

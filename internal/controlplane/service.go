@@ -63,3 +63,25 @@ func (s *Service) TrustedKeys(org string) ([]TrustedKey, error) {
 	}
 	return s.config.TrustedKeys(org)
 }
+
+// Gate runs the fleet CI gate (Phase 3) server-side over the org's submitted
+// snapshots and configured policy — the hosted equivalent of `assay fleet
+// verify`. It reuses the exact pure functions, so a CI failure here matches what
+// a teammate sees locally. With no org policy configured, the default policy
+// applies (blast-radius check off; only quarantine flags conformance).
+func (s *Service) Gate(org string) (fleet.GateResult, error) {
+	snaps, err := s.store.Snapshots(org)
+	if err != nil {
+		return fleet.GateResult{}, err
+	}
+	pol, ok, err := s.Policy(org)
+	if err != nil {
+		return fleet.GateResult{}, err
+	}
+	if !ok {
+		pol = policy.Default()
+	}
+	rep := fleet.Aggregate(snaps)
+	con := fleet.CheckConformance(pol, snaps)
+	return fleet.Gate(rep, con, pol.Fleet.MaxBlastRadius), nil
+}
