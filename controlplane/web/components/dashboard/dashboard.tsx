@@ -45,6 +45,8 @@ import {
   fetchPolicy,
   savePolicy,
   isPolicyWritable,
+  isWritable,
+  accountAll,
   type PolicyLists,
   type PolicyMute,
 } from "@/lib/actions"
@@ -72,6 +74,12 @@ export function Dashboard() {
   const [agentFilter, setAgentFilter] = useState<Agent | "all">("all")
   const [kindFilter, setKindFilter] = useState<ArtifactKind | "all">("all")
   const [selected, setSelected] = useState<Artifact | null>(null)
+  const [writable, setWritable] = useState(false)
+  const [accounting, setAccounting] = useState(false)
+
+  useEffect(() => {
+    isWritable().then(setWritable).catch(() => setWritable(false))
+  }, [])
 
   const drift = useMemo(() => driftCounts(artifacts), [artifacts])
   const verdicts = useMemo(() => verdictCounts(artifacts), [artifacts])
@@ -124,6 +132,27 @@ export function Dashboard() {
   // lockfile or any known registry.
   const shadows = useMemo(() => artifacts.filter((a) => a.shadow), [artifacts])
 
+  // Account for every unaccounted artifact at once: add each to the lockfile and
+  // approve it, then reload so the banner clears.
+  async function approveAllShadows() {
+    if (
+      !window.confirm(
+        `Approve ${shadows.length} unaccounted artifact${shadows.length > 1 ? "s" : ""} as trusted? ` +
+          `They'll be added to the lockfile.`,
+      )
+    )
+      return
+    setAccounting(true)
+    try {
+      await accountAll()
+      reload()
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "approve-all failed")
+    } finally {
+      setAccounting(false)
+    }
+  }
+
   // Dormant-then-active sleepers (F2): the highest-signal supply-chain event —
   // an old install that lay unused, drifted, then ran for the first time.
   const sleepers = useMemo(() => artifacts.filter((a) => a.sleeper), [artifacts])
@@ -171,7 +200,7 @@ export function Dashboard() {
       {shadows.length > 0 && (
         <div className="mt-4 flex items-start gap-3 rounded-lg border border-sev-high/40 bg-sev-high/10 px-4 py-3">
           <EyeOff className="mt-0.5 h-5 w-5 shrink-0 text-sev-high" />
-          <div className="text-sm">
+          <div className="flex-1 text-sm">
             <p className="font-medium text-sev-high">
               {shadows.length} unaccounted extension{shadows.length > 1 ? "s" : ""}
             </p>
@@ -180,6 +209,16 @@ export function Dashboard() {
               registry. Approve to account for them, or quarantine.
             </p>
           </div>
+          {writable && (
+            <button
+              type="button"
+              onClick={approveAllShadows}
+              disabled={accounting}
+              className="shrink-0 self-center rounded-md border border-sev-high/40 bg-sev-high/10 px-3 py-1.5 text-xs font-medium text-sev-high hover:bg-sev-high/20 disabled:opacity-50"
+            >
+              {accounting ? "Approving…" : `Approve all (${shadows.length})`}
+            </button>
+          )}
         </div>
       )}
 

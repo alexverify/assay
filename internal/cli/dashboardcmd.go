@@ -77,7 +77,9 @@ func (a *App) runDashboard(ctx context.Context, args []string) int {
 		ApprovalVerifier: asApprovalVerifier(verifier),
 		Mutate: func(ctx context.Context, fn func(lf *lockfile.Lockfile) error) error {
 			lf, err := store.Read(ctx, *c.lockfile)
-			if err != nil {
+			if errors.Is(err, ports.ErrNoLockfile) {
+				lf = lockfile.Lockfile{} // no lockfile yet → account the first artifact into a fresh one
+			} else if err != nil {
 				return err
 			}
 			if err := fn(&lf); err != nil {

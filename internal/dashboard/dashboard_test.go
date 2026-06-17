@@ -596,3 +596,138 @@ func TestTokenEndpoint(t *testing.T) {
 		t.Errorf("read-only server should report writable=false")
 	}
 }
+
+// accountServer wires a writable server whose live inventory holds two
+// unaccounted (local-source) artifacts absent from the committed lockfile, plus
+// one already-locked artifact. It returns the server and a pointer to the live
+// lockfile that Mutate persists into.
+func accountServer(t *testing.T) (*dashboard.Server, *lockfile.Lockfile) {
+	t.Helper()
+	current := lockfile.Build([]artifact.Artifact{
+		{ID: "locked", Tool: "claude-code", Type: artifact.TypeMCPServer, Name: "github",
+			ContentHash: "sha256-locked", Source: artifact.Source{Kind: artifact.SourceNPM}},
+		{ID: "shadow1", Tool: "claude-code", Type: artifact.TypeRules, Name: "CLAUDE.md",
+			ContentHash: "sha256-s1", Source: artifact.Source{Kind: artifact.SourceLocal}},
+		{ID: "shadow2", Tool: "claude-code", Type: artifact.TypeSkill, Name: "local-skill",
+			ContentHash: "sha256-s2", Source: artifact.Source{Kind: artifact.SourceLocal}},
+	}, time.Unix(0, 0).UTC(), "assay/test")
+	locked := lockfile.Build([]artifact.Artifact{
+		{ID: "locked", Tool: "claude-code", Type: artifact.TypeMCPServer, Name: "github",
+			ContentHash: "sha256-locked", Source: artifact.Source{Kind: artifact.SourceNPM}},
+	}, time.Unix(0, 0).UTC(), "assay/test")
+	srv := dashboard.New(dashboard.Deps{
+		Inventory: func(context.Context) (lockfile.Lockfile, error) { return current, nil },
+		Locked:    func(context.Context) (lockfile.Lockfile, error) { return locked, nil },
+		Mutate: func(ctx context.Context, fn func(*lockfile.Lockfile) error) error {
+			return fn(&locked)
+		},
+	})
+	return srv, &locked
+}
+
+func entryByID(lf *lockfile.Lockfile, id string) *lockfile.Entry {
+	for i := range lf.Artifacts {
+		if lf.Artifacts[i].ID == id {
+			return &lf.Artifacts[i]
+		}
+	}
+	return nil
+}
+
+func TestApproveUnaccountedUpsertsIntoLockfile(t *testing.T) {
+	srv, locked := accountServer(t)
+	rec := postJSON(t, srv.Handler(), "/api/approve", srv.Token(), `{"id":"shadow1","on":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("approve unaccounted = %d (%s)", rec.Code, rec.Body.String())
+	}
+	e := entryByID(locked, "shadow1")
+	if e == nil {
+		t.Fatal("shadow1 should have been added to the lockfile")
+	}
+	if e.ContentHash != "sha256-s1" {
+		t.Fatalf("upserted entry must record the live hash, got %q", e.ContentHash)
+	}
+	if e.Approval == nil || e.Approval.Status != "approved" {
+		t.Fatalf("shadow1 should be approved, got %+v", e.Approval)
+	}
+}
+
+func TestQuarantineUnaccountedUpsertsIntoLockfile(t *testing.T) {
+	srv, locked := accountServer(t)
+	rec := postJSON(t, srv.Handler(), "/api/quarantine", srv.Token(), `{"id":"shadow2","on":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("quarantine unaccounted = %d (%s)", rec.Code, rec.Body.String())
+	}
+	e := entryByID(locked, "shadow2")
+	if e == nil || !e.Quarantined {
+		t.Fatalf("shadow2 should be added and quarantined, got %+v", e)
+	}
+}
+
+func TestWriteUnknownIDIs404(t *testing.T) {
+	srv, _ := accountServer(t)
+	rec := postJSON(t, srv.Handler(), "/api/approve", srv.Token(), `{"id":"nope","on":true}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown id → 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAccountAllApprovesShadowSet(t *testing.T) {
+	srv, locked := accountServer(t)
+	rec := postJSON(t, srv.Handler(), "/api/account-all", srv.Token(), ``)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("account-all = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Count != 2 {
+		t.Fatalf("expected 2 shadows accounted, got %d", body.Count)
+	}
+	for _, id := range []string{"shadow1", "shadow2"} {
+		e := entryByID(locked, id)
+		if e == nil || e.Approval == nil || e.Approval.Status != "approved" {
+			t.Fatalf("%s should be added and approved, got %+v", id, e)
+		}
+	}
+	// The already-locked artifact must not be duplicated.
+	n := 0
+	for _, e := range locked.Artifacts {
+		if e.ID == "locked" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("locked artifact duplicated: %d copies", n)
+	}
+}
+
+func TestAccountAllTokenGuardAndReadOnly(t *testing.T) {
+	srv, _ := accountServer(t)
+	if rec := postJSON(t, srv.Handler(), "/api/account-all", "", ``); rec.Code != http.StatusForbidden {
+		t.Fatalf("no token → 403, got %d", rec.Code)
+	}
+	ro := testServer(t) // no Mutate dep
+	if rec := postJSON(t, ro.Handler(), "/api/account-all", ro.Token(), ``); rec.Code != http.StatusForbidden {
+		t.Fatalf("read-only → 403, got %d", rec.Code)
+	}
+}
+
+func TestApproveLockedArtifactStillWorks(t *testing.T) {
+	srv, locked := accountServer(t)
+	rec := postJSON(t, srv.Handler(), "/api/approve", srv.Token(), `{"id":"locked","on":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("approve locked = %d (%s)", rec.Code, rec.Body.String())
+	}
+	e := entryByID(locked, "locked")
+	if e == nil || e.Approval == nil || e.Approval.Status != "approved" {
+		t.Fatalf("locked artifact should be approved, got %+v", e)
+	}
+	// No duplicate row created for an already-present artifact.
+	if len(locked.Artifacts) != 1 {
+		t.Fatalf("approving a locked artifact must not add rows, got %d", len(locked.Artifacts))
+	}
+}

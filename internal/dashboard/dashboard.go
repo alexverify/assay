@@ -15,7 +15,6 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -132,6 +131,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/approve", s.handleApprove)
 	mux.HandleFunc("/api/quarantine", s.handleQuarantine)
 	mux.HandleFunc("/api/freeze", s.handleFreeze)
+	mux.HandleFunc("/api/account-all", s.handleAccountAll)
 	mux.HandleFunc("/api/policy", s.handlePolicy)
 	mux.HandleFunc("/api/mute", s.handleMute)
 	mux.HandleFunc("/api/egress-allow", s.handleEgressAllow)
@@ -288,6 +288,47 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 	s.mutate(w, r, func(e *lockfile.Entry, on bool) { e.Frozen = on })
 }
 
+// handleAccountAll accounts for every unaccounted artifact (B3) in one
+// read-modify-write: it adds each shadow (a live artifact absent from the
+// lockfile — exactly what the dashboard's banner counts) to the lockfile and
+// marks it approved. Token-guarded; a no-op (count 0) when nothing is shadow.
+func (s *Server) handleAccountAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.Header.Get("X-Assay-Token") != s.token || s.token == "" {
+		http.Error(w, "missing or invalid write token", http.StatusForbidden)
+		return
+	}
+	if s.deps.Mutate == nil {
+		http.Error(w, "dashboard is read-only (no lockfile to write)", http.StatusForbidden)
+		return
+	}
+	live, err := s.deps.Inventory(r.Context())
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	count := 0
+	err = s.deps.Mutate(r.Context(), func(lf *lockfile.Lockfile) error {
+		shadows := shadowEntries(live, *lf)
+		for _, e := range shadows {
+			lf.Artifacts = append(lf.Artifacts, e)
+			lf.Artifacts[len(lf.Artifacts)-1].Approval = &lockfile.Approval{Status: "approved", By: "dashboard"}
+		}
+		count = len(shadows)
+		return nil
+	})
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	writeJSON(w, struct {
+		Count int `json:"count"`
+	}{Count: count})
+}
+
 // mutate is the shared, token-guarded write path: it applies set to the entry
 // whose ID matches the request body, persisting via Deps.Mutate.
 func (s *Server) mutate(w http.ResponseWriter, r *http.Request, set func(*lockfile.Entry, bool)) {
@@ -308,8 +349,16 @@ func (s *Server) mutate(w http.ResponseWriter, r *http.Request, set func(*lockfi
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
+	// Fetch the live inventory once so an unaccounted artifact (absent from the
+	// lockfile) can be upserted from it inside the atomic read-modify-write — the
+	// client sends only an ID; the server owns the recorded hash.
+	live, err := s.deps.Inventory(r.Context())
+	if err != nil {
+		httpError(w, err)
+		return
+	}
 	found := false
-	err := s.deps.Mutate(r.Context(), func(lf *lockfile.Lockfile) error {
+	err = s.deps.Mutate(r.Context(), func(lf *lockfile.Lockfile) error {
 		for i := range lf.Artifacts {
 			if lf.Artifacts[i].ID == body.ID {
 				set(&lf.Artifacts[i], body.On)
@@ -317,7 +366,17 @@ func (s *Server) mutate(w http.ResponseWriter, r *http.Request, set func(*lockfi
 				return nil
 			}
 		}
-		return fmt.Errorf("artifact %q not in the lockfile", body.ID)
+		// Not yet accounted: account for it by copying its live entry (with its
+		// current content hash) into the lockfile, then apply the change.
+		for _, e := range live.Artifacts {
+			if e.ID == body.ID {
+				lf.Artifacts = append(lf.Artifacts, e)
+				set(&lf.Artifacts[len(lf.Artifacts)-1], body.On)
+				found = true
+				return nil
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		httpError(w, err)

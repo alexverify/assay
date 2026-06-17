@@ -60,6 +60,23 @@ export function runAction(kind: ActionKind, id: string, on: boolean): Promise<vo
   return postJSON(`/api/${kind}`, { id, on })
 }
 
+/**
+ * accountAll approves every unaccounted (shadow) artifact at once: the backend
+ * adds each to the lockfile and marks it approved, returning how many it
+ * accounted for. Backs the "Approve all" action on the unaccounted banner.
+ */
+export async function accountAll(): Promise<{ count: number }> {
+  const token = await getToken()
+  const r = await fetch("/api/account-all", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Assay-Token": token },
+  })
+  if (!r.ok) {
+    throw new Error(`/api/account-all failed: ${(await r.text()).trim() || r.status}`)
+  }
+  return (await r.json()) as { count: number }
+}
+
 export interface PolicyLists {
   allowPublishers: string[]
   blockPublishers: string[]

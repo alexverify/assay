@@ -596,6 +596,25 @@ func isShadow(class lockfile.DriftClass, hasLocked bool, kind artifact.SourceKin
 	}
 }
 
+// shadowEntries returns the live inventory entries that are unaccounted (B3):
+// present in the scan but not in the lockfile and not from a known registry —
+// exactly the set the dashboard's orange banner counts. The bulk "account all"
+// write path approves these into the lockfile.
+func shadowEntries(current, locked lockfile.Lockfile) []lockfile.Entry {
+	classes := lockfile.Classify(locked, current)
+	hasLocked := map[string]bool{}
+	for _, e := range locked.Artifacts {
+		hasLocked[e.ID] = true
+	}
+	var out []lockfile.Entry
+	for _, e := range current.Artifacts {
+		if isShadow(classes[e.ID], hasLocked[e.ID], e.Source.Kind) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // kindOf maps the artifact type onto the dashboard's coarse kind.
 func kindOf(t artifact.Type) string {
 	switch t {
