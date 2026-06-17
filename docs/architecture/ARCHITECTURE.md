@@ -251,24 +251,28 @@ The first slice (4a) is built: a self-hostable team server that ingests
 content-free fleet snapshots and serves the aggregated blast-radius, reusing the
 exact pure functions the local dashboard uses.
 
-- **`internal/controlplane`** — the server: a `Service` (`Submit`/`Fleet`) over a
-  `Store` port, an HTTP handler (`POST /v1/snapshots`, `GET /v1/fleet`,
-  `/v1/healthz`), and machine bearer-token auth scoping every request to one org.
-  `Fleet` is just `fleet.Aggregate` over the org's snapshots, so a hosted report
-  is byte-identical to the local one.
-- **`internal/adapters/cpstore`** — the zero-dependency default persistence: one
-  JSON snapshot per owner under `<dir>/<org>/<owner>.json`. A Postgres adapter
-  can replace it behind the same `Store` port for scale.
-- **`internal/client`** — the opt-in CLI client (`Submit`/`Fleet`/`Health`); any
-  error is the caller's signal to fall back to the local path.
+- **`internal/controlplane`** — the server: a `Service` (`Submit`/`Fleet`/
+  `Policy`/`TrustedKeys`) over two ports — a mutable `Store` (per-machine
+  snapshots) and a read-mostly `Config` (admin-set org policy + trusted keys) —
+  an HTTP handler (`POST /v1/snapshots`, `GET /v1/fleet`, `GET /v1/policy`,
+  `GET /v1/registry/keys`, `/v1/healthz`), and machine bearer-token auth scoping
+  every request to one org. `Fleet` is just `fleet.Aggregate` over the org's
+  snapshots, so a hosted report is byte-identical to the local one.
+- **`internal/adapters/cpstore`** — the zero-dependency default persistence,
+  satisfying both ports: snapshots under `<dir>/<org>/snapshots/<owner>.json`,
+  the admin config as `<dir>/<org>/policy.json` and `trustedkeys.json`. A Postgres
+  adapter can replace it behind the same interfaces for scale.
+- **`internal/client`** — the opt-in CLI client (`Submit`/`Fleet`/`Policy`/
+  `TrustedKeys`/`Health`); any error is the caller's signal to fall back to the
+  local path, and a 404 on policy means "keep the local policy."
 - CLI: `assay serve` runs the server; `assay fleet push` submits this machine's
-  snapshot; `assay fleet --server …` reads the org report with the same renderer
-  as the local view.
+  snapshot; `assay fleet --server …` reads the org report; `verify`/`fleet verify`
+  pull the org policy and trusted keys (server-preferred, local fallback).
 
-Remaining slices (still seams): policy & trusted-keys pull, hosted CI gate,
-audit/usage ingest + alerts, the web dashboard on hosted data, and the live
-hash-only reputation lookup (H3b). **`packaging/`** — release tooling beyond
-GoReleaser — is also still a seam. See each directory's `README.md` / `doc.go`.
+Remaining slices (still seams): hosted CI gate ergonomics, audit/usage ingest +
+alerts, the web dashboard on hosted data, and the live hash-only reputation
+lookup (H3b). **`packaging/`** — release tooling beyond GoReleaser — is also
+still a seam. See each directory's `README.md` / `doc.go`.
 
 ## Design principles
 

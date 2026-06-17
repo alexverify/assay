@@ -362,8 +362,23 @@ A bearer token scopes every request to one org (row-level isolation). The
 snapshot is content-free, exactly what `fleet export` would commit — ids, hashes,
 and drift/verdict, never code or secrets. The default store is the zero-dependency
 file backend (one JSON per machine); a Postgres adapter for scale slots in behind
-the same interface. Policy/keys pull, audit ingest, a hosted dashboard, and live
-reputation lookup are the remaining (designed) slices.
+the same interface.
+
+**Org policy and trusted keys (pull).** An admin sets the org's policy and
+trusted signing keys on the server (drop `policy.json` / `trustedkeys.json` under
+`<store>/<org>/`). The CLI then pulls them, preferring the server over local
+files and **falling back to local** if the server has none or is unreachable:
+
+```sh
+# verify and the fleet CI gate pull the org policy + trusted keys when a server is set
+assay verify --ci --server "$ASSAY_SERVER" --token "$ASSAY_TOKEN"
+assay fleet verify --server "$ASSAY_SERVER" --token "$ASSAY_TOKEN"
+```
+
+A server with no policy for the org returns 404, which the CLI treats as "use the
+local `assay.policy.json`" — so adopting a server never silently changes a gate
+you didn't configure. Audit ingest, a hosted dashboard, and live reputation
+lookup are the remaining (designed) slices.
 
 ## Exit codes (stable contract)
 

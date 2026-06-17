@@ -141,6 +141,25 @@ server, the submitted snapshot is content-free (the same bytes `fleet export`
 commits), and any client error falls back to the local path — the advisory-feed
 contract, now over HTTP.
 
+## Org policy and keys are admin config, pulled with a local fallback
+
+The control plane separates two kinds of state behind two ports: a mutable
+`Store` (each machine's fleet snapshot, written by that machine) and a
+read-mostly `Config` (the org policy and trusted keys, set by an admin). They are
+distinct because they have different owners and lifecycles — conflating them
+would let a machine's submission touch the team's policy. The file backend keeps
+snapshots in a `snapshots/` subdir precisely so an owner literally named
+"policy" can't collide with `policy.json`.
+
+The CLI **prefers the server but falls back to local**: `verify` and
+`fleet verify` pull `GET /v1/policy` and `GET /v1/registry/keys` when a
+`--server` is set, but a 404 (no org policy) or any transport error drops back to
+the committed `assay.policy.json` / trusted-keys registry. So adopting a server
+never silently changes a gate you didn't configure, and an unreachable server
+never blocks CI — the same advisory-feed contract the offline reputation and
+advisory feeds follow. The server policy is `Normalize`d exactly as
+`policystore.Load` normalizes the local one, so the two paths gate identically.
+
 ## The fleet CI gate reuses the dashboard's pure rollups
 
 `assay fleet verify` enforces what the dashboard's Fleet tab shows. Rather than
