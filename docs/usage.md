@@ -405,8 +405,21 @@ hosts, denied tool calls). The audit events are **content-free** — tool/server
 names, egress hostnames, timings, statuses, and argument *digests*, never raw
 arguments or secrets. `audit push` reveals which tools ran and which hosts they
 reached, so it is strictly opt-in; see **[docs/privacy.md](privacy.md)** for the
-full contract of what leaves a machine. A hosted dashboard and live reputation
-lookup are the remaining (designed) slices.
+full contract of what leaves a machine.
+
+**Live reputation lookup.** An admin can host the org's reputation corpus (drop
+`reputation.json` under `<store>/<org>/`), and the CLI or dashboard looks hashes
+up against it instead of a local file:
+
+```sh
+assay reputation --server "$ASSAY_SERVER" --token "$ASSAY_TOKEN" <content-hash>...
+assay dashboard --reputation-server "$ASSAY_SERVER" --reputation-token "$ASSAY_TOKEN"
+```
+
+A lookup sends only the content hashes you already hold — a hash discloses
+nothing about content you don't — and the server replies with matches only. With
+no `--reputation-server`, the dashboard uses the local `assay.reputation.json`
+corpus as before. The hosted dashboard on org data is the remaining slice.
 
 ## Exit codes (stable contract)
 

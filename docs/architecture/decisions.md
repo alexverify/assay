@@ -182,10 +182,17 @@ content hash — no identity, no code, no source. Privacy is **structural, not
 promised**: the corpus is data the user already holds, so a lookup
 (`Source.Lookup`) is a local map lookup that sends nothing. It is strictly
 opt-in (an absent corpus is a silent no-op, like the advisory feed offline) and
-a miss is "unknown," never a negative claim. A live hash-only lookup service
-could replace the local corpus behind the same `reputation.Source` seam; that is
-a product decision (a hosted endpoint, a published privacy contract), not a code
-change.
+a miss is "unknown," never a negative claim.
+
+The live hash-only lookup (H3b) is now built behind that same `reputation.Source`
+seam: an admin hosts the org's corpus on the control plane, and the dashboard's
+`Reputation` dep resolves the inventory's hashes from `POST /v1/reputation`
+instead of a local file. Privacy stays structural — the lookup sends only the
+content hashes the caller already holds (a hash discloses nothing about content
+you don't), and the server returns **matches only**, never the whole corpus. It
+is an org-scoped corpus (the team's curated "we trust this exact hash" set), not
+a global community service; a cross-org community endpoint is a further extension
+behind the same seam.
 
 ## Reachability is a location heuristic, not a call graph
 

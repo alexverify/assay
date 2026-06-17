@@ -254,9 +254,10 @@ exact pure functions the local dashboard uses.
 - **`internal/controlplane`** — the server: a `Service` (`Submit`/`Fleet`/
   `Policy`/`TrustedKeys`) over two ports — a mutable `Store` (per-machine
   snapshots) and a read-mostly `Config` (admin-set org policy + trusted keys) —
-  an HTTP handler (`POST /v1/snapshots`, `POST /v1/audit`, `GET /v1/fleet`,
-  `GET /v1/gate`, `GET /v1/alerts`, `GET /v1/policy`, `GET /v1/registry/keys`,
-  `/v1/healthz`), and machine bearer-token auth scoping every request to one org.
+  an HTTP handler (`POST /v1/snapshots`, `POST /v1/audit`, `POST /v1/reputation`,
+  `GET /v1/fleet`, `GET /v1/gate`, `GET /v1/alerts`, `GET /v1/policy`,
+  `GET /v1/registry/keys`, `/v1/healthz`), and machine bearer-token auth scoping
+  every request to one org.
   `Fleet` is `fleet.Aggregate`, `Gate` is `fleet.Gate`, and `Alerts` is
   `alert.Derive` over the org's snapshots and ingested audit — so the hosted
   report, CI gate, and alerts are byte-identical to the local computation.
@@ -277,9 +278,12 @@ exact pure functions the local dashboard uses.
   trusted keys (server-preferred, local fallback); `assay fleet verify --server …`
   gates the fleet on the server over submitted snapshots.
 
-What leaves a machine, and only on opt-in, is specified in
-[`docs/privacy.md`](../privacy.md). Remaining slices (still seams): the web
-dashboard on hosted data, and the live hash-only reputation lookup (H3b). **`packaging/`** — release tooling beyond GoReleaser — is also
+The live hash-only reputation lookup (H3b) reuses the existing `reputation.Source`
+seam: the dashboard's `Reputation` dep now resolves a corpus for the inventory's
+content hashes, served either from a local file or — when a server is configured
+— from `POST /v1/reputation`, which returns matches only. What leaves a machine,
+and only on opt-in, is specified in [`docs/privacy.md`](../privacy.md). The
+remaining slice (still a seam) is the web dashboard on hosted data. **`packaging/`** — release tooling beyond GoReleaser — is also
 still a seam. See each directory's `README.md` / `doc.go`.
 
 ## Design principles

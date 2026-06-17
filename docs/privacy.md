@@ -18,8 +18,9 @@ so when **you opt in** by pointing the CLI at a control plane (`--server` /
   never values.
 - **Your signing private key.** Only the public key is shared, and only when you
   choose to (`key show`, or an admin adding it to the registry).
-- **The reputation corpus lookup.** The community trust signal is a local,
-  hash-keyed map lookup — it sends nothing, even when configured.
+- **The local reputation corpus lookup.** When you use a local corpus file, the
+  community trust signal is a local, hash-keyed map lookup — it sends nothing.
+  (The opt-in *live* lookup below sends only hashes, never content.)
 
 ## What leaves only when you opt in to a control plane
 
@@ -28,6 +29,7 @@ so when **you opt in** by pointing the CLI at a control plane (`--server` /
 | `assay fleet push` | a **content-free snapshot**: per-artifact id, name, kind, content hash, source ref, and your local drift/verdict | no code, no secrets, no file bytes — exactly what `fleet export` writes to a committed file |
 | `assay audit push` | your **audit events**: tool and server names, egress **hostnames**, HTTP methods, byte counts, redaction counts, statuses, timestamps, and argument **digests** | no raw arguments, no secrets, no response bodies |
 | `assay verify --server`, `assay fleet verify --server` | nothing is uploaded — these **pull** org policy and trusted keys (reads) | — |
+| `assay reputation`, dashboard `--reputation-server` | the **content hashes** you want to look up | a SHA-256 hash reveals nothing about content you do not already hold; the server replies only with matches |
 
 Two honesty notes about `audit push`:
 

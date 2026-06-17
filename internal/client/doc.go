@@ -9,10 +9,11 @@
 //	GET  /v1/gate          run the fleet CI gate over submitted snapshots (4c)
 //	POST /v1/audit         ingest this machine's audit events, batched (4d)
 //	GET  /v1/alerts        read the org's derived team alerts (4d)
+//	POST /v1/reputation    look up content hashes in the org's corpus (4f)
 //	GET  /v1/policy        pull the org policy (4b; 404 → keep local policy)
 //	GET  /v1/registry/keys pull the org's trusted signing keys (4b)
 //	GET  /v1/healthz       liveness check
 //
-// Planned (later slices): POST /v1/artifacts/:id/approve,
-// GET /v1/reputation/:hash. See docs/privacy.md for what each call sends.
+// Planned (later slices): POST /v1/artifacts/:id/approve. See docs/privacy.md
+// for what each call sends.
 package client
