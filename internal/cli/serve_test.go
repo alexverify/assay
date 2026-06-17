@@ -10,6 +10,7 @@ import (
 
 	"github.com/alexverify/assay/internal/cli"
 	"github.com/alexverify/assay/internal/controlplane"
+	"github.com/alexverify/assay/internal/domain/policy"
 )
 
 func TestFleetPushThenShowRemote(t *testing.T) {
@@ -63,6 +64,38 @@ func TestServeRequiresTokens(t *testing.T) {
 	}
 	if !strings.Contains(errBuf.String(), "tokens") {
 		t.Errorf("error should mention tokens: %s", errBuf.String())
+	}
+}
+
+func TestFleetVerifyPullsServerPolicy(t *testing.T) {
+	// The server holds a strict blast-radius policy; a local fleet dir with a
+	// drift on two machines must fail the gate when verify pulls that policy,
+	// even though no local policy file exists.
+	cfg := controlplane.NewMemConfig()
+	cfg.SetPolicy("acme", policy.Policy{Fleet: policy.FleetPolicy{MaxBlastRadius: 1}})
+	srv := httptest.NewServer(controlplane.NewServer(
+		controlplane.NewService(controlplane.NewMemStore(), cfg),
+		controlplane.StaticAuth{"tok": "acme"},
+	))
+	t.Cleanup(srv.Close)
+
+	dir := t.TempDir()
+	for _, o := range []string{"alice", "bob"} {
+		body := `{"owner":"` + o + `","artifacts":[{"id":"x","name":"feed","kind":"skill","hash":"h-` + o + `","drift":"drifted","verdict":"review"}]}`
+		if err := os.WriteFile(filepath.Join(dir, o+".json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	app, _, _ := newApp()
+	// Point --policy at a nonexistent file so only the server policy can gate.
+	code := app.Execute(context.Background(), []string{
+		"fleet", "verify", "--dir", dir,
+		"--policy", filepath.Join(dir, "none.json"),
+		"--server", srv.URL, "--token", "tok",
+	})
+	if code != cli.ExitDrift {
+		t.Fatalf("server policy should fail the gate (1), got %d", code)
 	}
 }
 

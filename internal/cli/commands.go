@@ -14,7 +14,6 @@ import (
 	"github.com/alexverify/assay/internal/adapters/historystore"
 	"github.com/alexverify/assay/internal/adapters/lockstore"
 	"github.com/alexverify/assay/internal/adapters/notify"
-	"github.com/alexverify/assay/internal/adapters/policystore"
 	"github.com/alexverify/assay/internal/adapters/sbom"
 	"github.com/alexverify/assay/internal/adapters/sign"
 	"github.com/alexverify/assay/internal/app/ports"
@@ -89,16 +88,18 @@ func (a *App) runVerify(ctx context.Context, args []string) int {
 	ci := fs.Bool("ci", false, "strict mode: also apply the policy gate (severity threshold, approvals)")
 	policyPath := fs.String("policy", "assay.policy.json", "policy file applied in --ci mode")
 	trustedKeys := fs.String("trusted-keys", "assay.trustedkeys", "committed trusted-keys registry checked by requireSignature")
+	server := fs.String("server", envOr("ASSAY_SERVER", ""), "control-plane URL (opt-in: pull org policy and trusted keys)")
+	token := fs.String("token", envOr("ASSAY_TOKEN", ""), "machine token for the control plane")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
 
-	pol, _, err := policystore.Load(*policyPath)
+	pol, err := a.resolvePolicy(ctx, *server, *token, *policyPath)
 	if err != nil {
 		fmt.Fprintf(a.Stderr, "verify: %v\n", err)
 		return ExitError
 	}
-	verifier, err := a.lockfileVerifier(*trustedKeys)
+	verifier, err := a.lockfileVerifierWithServer(ctx, *trustedKeys, *server, *token)
 	if err != nil {
 		fmt.Fprintf(a.Stderr, "verify: %v\n", err)
 		return ExitError

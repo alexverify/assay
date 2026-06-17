@@ -52,7 +52,7 @@ func (a *App) runFleet(ctx context.Context, args []string) int {
 		}
 		return a.fleetShow(*dir, *policyPath)
 	case "verify":
-		return a.fleetVerify(*dir, *policyPath)
+		return a.fleetVerify(ctx, *dir, *policyPath, *server, *token)
 	default:
 		fmt.Fprintf(a.Stderr, "fleet: unknown subcommand %q (want: export | push | show | verify)\n", sub)
 		return ExitUsage
@@ -64,7 +64,7 @@ func (a *App) runFleet(ctx context.Context, args []string) int {
 // threshold, exiting 1 (the stable drift/policy code) on any failure. It is a
 // read-only rollup over the same pure functions the dashboard uses, so a CI
 // failure matches exactly what a teammate sees in `assay fleet`.
-func (a *App) fleetVerify(dir, policyPath string) int {
+func (a *App) fleetVerify(ctx context.Context, dir, policyPath, server, token string) int {
 	snaps, err := fleetstore.Read(dir)
 	if err != nil {
 		fmt.Fprintf(a.Stderr, "fleet: %v\n", err)
@@ -75,7 +75,7 @@ func (a *App) fleetVerify(dir, policyPath string) int {
 		return ExitOK
 	}
 
-	pol, _, err := policystore.Load(policyPath)
+	pol, err := a.resolvePolicy(ctx, server, token, policyPath)
 	if err != nil {
 		fmt.Fprintf(a.Stderr, "fleet: %v\n", err)
 		return ExitError
