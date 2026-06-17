@@ -17,6 +17,7 @@ import (
 	"github.com/alexverify/assay/internal/app/ports"
 	"github.com/alexverify/assay/internal/client"
 	"github.com/alexverify/assay/internal/dashboard"
+	"github.com/alexverify/assay/internal/domain/alert"
 	"github.com/alexverify/assay/internal/domain/audit"
 	"github.com/alexverify/assay/internal/domain/fleet"
 	"github.com/alexverify/assay/internal/domain/lockfile"
@@ -37,11 +38,16 @@ func (a *App) runDashboard(ctx context.Context, args []string) int {
 	historyPath := fs.String("history", a.historyPath(), "posture-trend history file")
 	fleetDir := fs.String("fleet-dir", a.fleetDir(), "shared fleet-snapshot directory (blast radius)")
 	reputationPath := fs.String("reputation", "assay.reputation.json", "opt-in community reputation corpus (hash-keyed; absent = no signal)")
-	reputationServer := fs.String("reputation-server", envOr("ASSAY_SERVER", ""), "control-plane URL for a live hash-only reputation lookup (opt-in; overrides the local corpus)")
-	reputationToken := fs.String("reputation-token", envOr("ASSAY_TOKEN", ""), "machine token for the reputation lookup")
+	server := fs.String("server", envOr("ASSAY_SERVER", ""), "control-plane URL (opt-in: the Fleet and Alerts tabs read hosted org data)")
+	token := fs.String("token", envOr("ASSAY_TOKEN", ""), "machine token for the control plane")
+	reputationServer := fs.String("reputation-server", "", "control-plane URL for a live hash-only reputation lookup (defaults to --server)")
+	reputationToken := fs.String("reputation-token", "", "machine token for the reputation lookup (defaults to --token)")
 	snapshotDir := fs.String("snapshot-dir", "", "content-addressed store of approved file bytes (line-level drift diff); default <path>/.assay/snapshots")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
+	}
+	if *reputationServer == "" {
+		*reputationServer, *reputationToken = *server, *token
 	}
 	if *snapshotDir == "" {
 		*snapshotDir = a.snapshotDir(*c.path)
@@ -96,14 +102,22 @@ func (a *App) runDashboard(ctx context.Context, args []string) int {
 		History: func(context.Context) ([]posture.Posture, error) {
 			return historystore.Read(*historyPath)
 		},
-		Fleet: func(context.Context) (fleet.Report, error) {
+		Fleet: func(ctx context.Context) (fleet.Report, error) {
+			// With a control plane configured, the Fleet tab reads the org's
+			// hosted blast-radius (4e); otherwise the committed local snapshots.
+			if *server != "" {
+				return client.New(*server, *token).Fleet(ctx)
+			}
 			snaps, err := fleetstore.Read(*fleetDir)
 			if err != nil {
 				return fleet.Report{}, err
 			}
 			return fleet.Aggregate(snaps), nil
 		},
-		Conformance: func(context.Context) (fleet.Conformance, error) {
+		Conformance: func(ctx context.Context) (fleet.Conformance, error) {
+			if *server != "" {
+				return client.New(*server, *token).Conformance(ctx)
+			}
 			snaps, err := fleetstore.Read(*fleetDir)
 			if err != nil {
 				return fleet.Conformance{}, err
@@ -113,6 +127,13 @@ func (a *App) runDashboard(ctx context.Context, args []string) int {
 				return fleet.Conformance{}, err
 			}
 			return fleet.CheckConformance(p, snaps), nil
+		},
+		Alerts: func(ctx context.Context) ([]alert.Alert, error) {
+			// Team alerts come only from a control plane; nil when local-only.
+			if *server == "" {
+				return nil, nil
+			}
+			return client.New(*server, *token).Alerts(ctx)
 		},
 		Reputation: func(hashes []string) (reputation.Source, error) {
 			// A live hash-only lookup when a control plane is configured (H3b);
