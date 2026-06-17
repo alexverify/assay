@@ -45,31 +45,37 @@ make build   # → ./bin/assay
 ## Quickstart
 
 ```sh
-make build            # builds ./bin/assay (zero external dependencies)
+make install          # build + install `assay` onto your PATH (zero external deps)
+                      #   installs to your Go bin; if `assay` isn't found, add that
+                      #   dir to PATH (the command prints the exact line). Prefer not
+                      #   to install? `make build` produces ./bin/assay instead.
 
 # From a project that uses Claude Code (has .mcp.json and/or .claude/skills):
-./bin/assay scan          # discover, hash, analyze → writes assaylock.json
-./bin/assay list          # pretty inventory across tools
-./bin/assay verify        # recompute & diff vs the lockfile (rug-pull check)
-./bin/assay verify --ci   # strict: apply the policy gate (see Policy below)
-./bin/assay diff          # informational: what changed since the lockfile
-./bin/assay approve <id>  # mark an artifact approved in the lockfile
-./bin/assay sign          # sign the lockfile with your local ed25519 key
-./bin/assay key show      # print your public key (share it with your team)
-./bin/assay key trust <k> # trust a teammate's public key
-./bin/assay wrap          # audit every MCP tool call via the stdio shim
-./bin/assay wrap --status # what's wrapped + the real underlying commands
-./bin/assay unwrap        # restore the original MCP config
-./bin/assay install-hooks # add usage hooks so skills/subagents get telemetry too
-./bin/assay dashboard     # local web dashboard: inventory, drift, usage, fleet
-./bin/assay fleet export  # write this machine's content-free snapshot to .assay/fleet
-./bin/assay fleet         # team blast-radius + policy conformance from snapshots
-./bin/assay fleet verify  # CI gate: exit 1 if any machine is out of policy
-./bin/assay serve         # run the self-hostable team control plane (opt-in)
-./bin/assay fleet push    # submit this machine's snapshot to a control plane (--server)
-./bin/assay audit push    # upload this machine's audit events (--server)
-./bin/assay alerts        # team alerts: drift, quarantine, blocked egress (--server)
+assay scan            # discover, hash, analyze → writes assaylock.json
+assay list            # pretty inventory across tools
+assay verify          # recompute & diff vs the lockfile (rug-pull check)
+assay verify --ci     # strict: apply the policy gate (see Policy below)
+assay diff            # informational: what changed since the lockfile
+assay approve <id>    # mark an artifact approved in the lockfile
+assay sign            # sign the lockfile with your local ed25519 key
+assay key show        # print your public key (share it with your team)
+assay key trust <k>   # trust a teammate's public key
+assay wrap            # audit every MCP tool call via the stdio shim
+assay wrap --status   # what's wrapped + the real underlying commands
+assay unwrap          # restore the original MCP config
+assay install-hooks   # add usage hooks so skills/subagents get telemetry too
+assay dashboard       # local web dashboard: inventory, drift, usage, fleet
+assay fleet export    # write this machine's content-free snapshot to .assay/fleet
+assay fleet           # team blast-radius + policy conformance from snapshots
+assay fleet verify    # CI gate: exit 1 if any machine is out of policy
+assay serve           # run the self-hostable team control plane (opt-in)
+assay fleet push      # submit this machine's snapshot to a control plane (--server)
+assay audit push      # upload this machine's audit events (--server)
+assay alerts          # team alerts: drift, quarantine, blocked egress (--server)
 ```
+
+> Not a Go-bin-on-PATH person? `sudo make install PREFIX=/usr/local` installs to
+> `/usr/local/bin`. For one-off runs without installing, `make run ARGS="scan"`.
 
 Exit codes (stable for CI): `0` clean · `1` drift / findings over threshold ·
 `2` usage error · `3` internal error.

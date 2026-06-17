@@ -8,6 +8,12 @@ BIN_DIR     := bin
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS     := -s -w -X '$(PKG)/internal/buildinfo.Version=$(VERSION)'
 
+# Where `make install` puts the binary: your Go bin by default (on PATH for most
+# Go setups, no sudo). Override with `make install PREFIX=/usr/local` to install
+# to $(PREFIX)/bin instead.
+GOBIN       := $(shell go env GOBIN)
+INSTALL_DIR ?= $(if $(PREFIX),$(PREFIX)/bin,$(if $(GOBIN),$(GOBIN),$(shell go env GOPATH)/bin))
+
 .DEFAULT_GOAL := help
 
 .PHONY: help
@@ -19,6 +25,18 @@ help: ## Show this help
 build: ## Build the static binary into ./bin
 	@mkdir -p $(BIN_DIR)
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) $(CMD)
+
+.PHONY: install
+install: ## Build and install `assay` onto your PATH (defaults to your Go bin)
+	@mkdir -p "$(INSTALL_DIR)"
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o "$(INSTALL_DIR)/$(BINARY)" $(CMD)
+	@echo "installed → $(INSTALL_DIR)/$(BINARY)"
+	@command -v $(BINARY) >/dev/null 2>&1 || echo "note: $(INSTALL_DIR) is not on your PATH — add it (e.g. 'export PATH=\"$(INSTALL_DIR):\$$PATH\"')"
+
+.PHONY: uninstall
+uninstall: ## Remove the installed `assay` binary
+	rm -f "$(INSTALL_DIR)/$(BINARY)"
+	@echo "removed $(INSTALL_DIR)/$(BINARY)"
 
 .PHONY: dashboard-web
 dashboard-web: ## Build the Next.js dashboard and sync its static export into the embed dir
