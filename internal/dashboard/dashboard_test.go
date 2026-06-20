@@ -959,6 +959,43 @@ func TestFindingSafeStaleWhenContentChanged(t *testing.T) {
 	}
 }
 
+func TestSoloModeApprovedIsVerifiedWithoutSignature(t *testing.T) {
+	// An approved artifact with NO signature: solo mode treats it as verified.
+	art := artifact.Artifact{ID: "a1", Tool: "claude-code", Type: artifact.TypeSubagent, Name: "seo-local", ContentHash: "h"}
+	locked := lockfile.Build([]artifact.Artifact{art}, time.Unix(0, 0).UTC(), "t")
+	locked.Artifacts[0].Approval = &lockfile.Approval{Status: "approved", By: "dashboard"} // no Sig
+	current := lockfile.Build([]artifact.Artifact{art}, time.Unix(0, 0).UTC(), "t")
+	srv := dashboard.New(dashboard.Deps{
+		TeamMode:  false,
+		Inventory: func(context.Context) (lockfile.Lockfile, error) { return current, nil },
+		Locked:    func(context.Context) (lockfile.Lockfile, error) { return locked, nil },
+	})
+	var scan struct {
+		Artifacts []struct {
+			Drift string `json:"drift"`
+		} `json:"artifacts"`
+	}
+	json.Unmarshal(get(t, srv.Handler(), "/api/scan").Body.Bytes(), &scan)
+	if scan.Artifacts[0].Drift != "verified" {
+		t.Fatalf("solo approved should be verified, got %q", scan.Artifacts[0].Drift)
+	}
+}
+
+func TestTokenReportsTeamMode(t *testing.T) {
+	srv := dashboard.New(dashboard.Deps{
+		TeamMode:  true,
+		Inventory: func(context.Context) (lockfile.Lockfile, error) { return lockfile.Lockfile{}, nil },
+		Locked:    func(context.Context) (lockfile.Lockfile, error) { return lockfile.Lockfile{}, nil },
+	})
+	var body struct {
+		TeamMode bool `json:"teamMode"`
+	}
+	json.Unmarshal(get(t, srv.Handler(), "/api/token").Body.Bytes(), &body)
+	if !body.TeamMode {
+		t.Fatal("token endpoint should report teamMode=true")
+	}
+}
+
 func TestScanEmitsEmptyCapabilityArraysNotNull(t *testing.T) {
 	// A subagent with no network/filesystem capabilities must serialize [] (not
 	// null), or the dashboard's capability view crashes on .length.

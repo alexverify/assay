@@ -89,6 +89,11 @@ type Deps struct {
 	// stored baseline. Optional: when nil, the scan view falls back to the
 	// content-free file-name list.
 	Blobs func(contentHash string) (map[string][]byte, error)
+	// TeamMode is true when a trusted-keys registry declares at least one key —
+	// i.e. the user has opted into shared, signature-verified trust. When false
+	// (solo), an approval counts as trusted on its status alone and the dashboard
+	// hides the signed/unsigned/verified vocabulary entirely.
+	TeamMode bool
 	// Static overrides the embedded UI assets (used in tests); nil uses the
 	// embedded Next.js export.
 	Static fs.FS
@@ -350,9 +355,19 @@ func (s *Server) usageSummary() map[string]usage.Stat {
 }
 
 // approvedSet returns the IDs of locked artifacts whose approval is trusted.
-// With a verifier, "trusted" means a valid signature from a trusted key; without
-// one, an approval merely bearing a signature is accepted (dev fallback).
+// In solo mode (no trusted-keys registry) a status of "approved" is enough —
+// signatures are not surfaced. In team mode, "trusted" means a valid signature
+// from a trusted key (or, with no verifier wired, a signature merely present).
 func (s *Server) approvedSet(locked lockfile.Lockfile) map[string]bool {
+	if !s.deps.TeamMode {
+		out := make(map[string]bool)
+		for _, e := range locked.Artifacts {
+			if e.Approval != nil && e.Approval.Status == "approved" {
+				out[e.ID] = true
+			}
+		}
+		return out
+	}
 	if s.deps.ApprovalVerifier == nil {
 		return approvedSet(locked)
 	}
@@ -374,7 +389,8 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		Token          string `json:"token"`
 		Writable       bool   `json:"writable"`
 		PolicyWritable bool   `json:"policyWritable"`
-	}{Token: s.token, Writable: s.deps.Mutate != nil, PolicyWritable: s.deps.MutatePolicy != nil})
+		TeamMode       bool   `json:"teamMode"`
+	}{Token: s.token, Writable: s.deps.Mutate != nil, PolicyWritable: s.deps.MutatePolicy != nil, TeamMode: s.deps.TeamMode})
 }
 
 // markRequest is the body of a write endpoint: which artifact, and whether to

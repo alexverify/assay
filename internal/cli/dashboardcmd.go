@@ -60,8 +60,16 @@ func (a *App) runDashboard(ctx context.Context, args []string) int {
 	// The keyring (committed trusted-keys + personal) verifies approval
 	// signatures so the dashboard's "verified" status is cryptographically real.
 	verifier, _ := a.lockfileVerifier("assay.trustedkeys")
+	// Team mode: a trusted-keys registry declares at least one key (checked
+	// before the local-key self-trust fallback). Solo users (no registry) get the
+	// simplified Approved / Not-approved view with no signing vocabulary.
+	teamMode := false
+	if reg, err := sign.LoadKeyring("assay.trustedkeys", a.trustedKeysPath()); err == nil {
+		teamMode = reg.Len() > 0
+	}
 
 	srv := dashboard.New(dashboard.Deps{
+		TeamMode: teamMode,
 		Inventory: func(ctx context.Context) (lockfile.Lockfile, error) {
 			return builder.Build(ctx, scopes)
 		},
