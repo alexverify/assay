@@ -173,6 +173,10 @@ type DashFinding struct {
 	Detail   string `json:"detail"`
 	Evidence string `json:"evidence"`
 	Location string `json:"location"`
+	// File and Line are the structured anchor (File is POSIX-relative to the
+	// artifact root) the code-view modal uses to fetch and scroll the source.
+	File string `json:"file,omitempty"`
+	Line int    `json:"line,omitempty"`
 
 	// Capability × usage fusion (F3): how exercised the carrying artifact is
 	// (live | exercised | unknown), and the fused urgency rank that lifts a
@@ -680,6 +684,8 @@ func mapFindings(fs []finding.Finding, live risk.Liveness) []DashFinding {
 			Detail:   f.Explanation,
 			Evidence: f.Snippet,
 			Location: location(f),
+			File:     f.File,
+			Line:     f.Line,
 			Liveness: string(live),
 			RiskRank: risk.Rank(f.Severity, live),
 			Reach:    string(reach.Classify(f.File)),

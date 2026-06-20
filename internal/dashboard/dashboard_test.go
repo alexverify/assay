@@ -1,10 +1,14 @@
 package dashboard_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -576,6 +580,113 @@ func TestHistoryEndpoint(t *testing.T) {
 	}
 	if len(resp.History) != 2 || resp.History[1].Review != 1 {
 		t.Errorf("history payload = %+v", resp.History)
+	}
+}
+
+// sourceServer wires a server whose single artifact is rooted at dir on disk,
+// so the /api/source endpoint can read its files.
+func sourceServer(t *testing.T, dir string) *dashboard.Server {
+	t.Helper()
+	art := artifact.Artifact{
+		ID: "src1", Tool: "claude-code", Type: artifact.TypeSkill, Name: "demo",
+		Source: artifact.Source{Kind: artifact.SourceLocal, Ref: dir},
+	}
+	lf := lockfile.Build([]artifact.Artifact{art}, time.Unix(0, 0).UTC(), "t")
+	return dashboard.New(dashboard.Deps{
+		Inventory: func(context.Context) (lockfile.Lockfile, error) { return lf, nil },
+		Locked:    func(context.Context) (lockfile.Lockfile, error) { return lockfile.Lockfile{}, nil },
+	})
+}
+
+func TestSourceServesFileContent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("line1\nsecret = sk_live\nline3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := get(t, sourceServer(t, dir).Handler(), "/api/source?id=src1&file=SKILL.md")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Path != "SKILL.md" || !strings.Contains(body.Content, "sk_live") {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+}
+
+func TestSourceRejectsTraversal(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("x"), 0o644)
+	for _, f := range []string{"../../etc/passwd", "/etc/passwd"} {
+		rec := get(t, sourceServer(t, dir).Handler(), "/api/source?id=src1&file="+f)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("file=%q should be 400, got %d", f, rec.Code)
+		}
+	}
+}
+
+func TestSourceUnknownID(t *testing.T) {
+	dir := t.TempDir()
+	rec := get(t, sourceServer(t, dir).Handler(), "/api/source?id=nope&file=SKILL.md")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown id should be 404, got %d", rec.Code)
+	}
+}
+
+func TestSourceRejectsOversize(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "big.txt"), bytes.Repeat([]byte("a"), (1<<20)+1), 0o644)
+	rec := get(t, sourceServer(t, dir).Handler(), "/api/source?id=src1&file=big.txt")
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize should be 413, got %d", rec.Code)
+	}
+}
+
+func TestSourceRejectsSymlinkEscape(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	dir := t.TempDir()
+	outside := t.TempDir()
+	os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("TOPSECRET"), 0o644)
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(dir, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	rec := get(t, sourceServer(t, dir).Handler(), "/api/source?id=src1&file=link.txt")
+	if rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), "TOPSECRET") {
+		t.Fatalf("symlink escape served outside-root content: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFindingCarriesFileAndLine(t *testing.T) {
+	current := lockfile.Build([]artifact.Artifact{
+		{ID: "a1", Tool: "claude-code", Type: artifact.TypeSkill, Name: "demo",
+			Findings: []finding.Finding{{RuleID: "SECRET-PATH", Severity: finding.SeverityHigh, File: "SKILL.md", Line: 31}}},
+	}, time.Unix(0, 0).UTC(), "t")
+	srv := dashboard.New(dashboard.Deps{
+		Inventory: func(context.Context) (lockfile.Lockfile, error) { return current, nil },
+		Locked:    func(context.Context) (lockfile.Lockfile, error) { return lockfile.Lockfile{}, nil },
+	})
+	rec := get(t, srv.Handler(), "/api/scan")
+	var body struct {
+		Artifacts []struct {
+			Findings []struct {
+				File string `json:"file"`
+				Line int    `json:"line"`
+			} `json:"findings"`
+		} `json:"artifacts"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	f := body.Artifacts[0].Findings[0]
+	if f.File != "SKILL.md" || f.Line != 31 {
+		t.Fatalf("finding should carry file+line, got %+v", f)
 	}
 }
 

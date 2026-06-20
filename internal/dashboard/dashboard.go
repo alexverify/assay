@@ -15,8 +15,11 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/alexverify/assay/internal/adapters/auditlog"
@@ -132,6 +135,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/drift", s.handleDrift)
 	mux.HandleFunc("/api/audit", s.handleAudit)
 	mux.HandleFunc("/api/scan", s.handleScan)
+	mux.HandleFunc("/api/source", s.handleSource)
 	mux.HandleFunc("/api/token", s.handleToken)
 	mux.HandleFunc("/api/approve", s.handleApprove)
 	mux.HandleFunc("/api/quarantine", s.handleQuarantine)
@@ -191,6 +195,108 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, struct {
 		Artifacts []DashArtifact `json:"artifacts"`
 	}{Artifacts: arts})
+}
+
+// maxSourceBytes caps the file size the code-view endpoint will read, so a huge
+// or binary file can't be loaded into the browser. ~1 MiB covers any skill/rule.
+const maxSourceBytes = 1 << 20
+
+// handleSource serves the raw text of one file belonging to an artifact, backing
+// the click-through code view for a finding. It is a read-only, loopback-only
+// file reader confined to the artifact's own on-disk root: the requested path is
+// resolved within that root (symlinks included) so it can never become an
+// arbitrary-file-read oracle.
+func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	file := r.URL.Query().Get("file")
+	if id == "" || file == "" {
+		http.Error(w, "id and file are required", http.StatusBadRequest)
+		return
+	}
+	inv, err := s.deps.Inventory(r.Context())
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	root, ok := artifactRoot(inv, id)
+	if !ok {
+		http.Error(w, "artifact not found", http.StatusNotFound)
+		return
+	}
+	target, err := resolveWithinRoot(root, file)
+	if err != nil {
+		http.Error(w, "invalid file path", http.StatusBadRequest)
+		return
+	}
+	info, err := os.Stat(target)
+	if err != nil || info.IsDir() {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+	if info.Size() > maxSourceBytes {
+		http.Error(w, "file too large to preview", http.StatusRequestEntityTooLarge)
+		return
+	}
+	b, err := os.ReadFile(target)
+	if err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}{Path: file, Content: string(b)})
+}
+
+// artifactRoot returns the on-disk directory that an artifact's relative file
+// paths resolve against: the source dir for a multi-file artifact, or the
+// containing dir for a single-file one (e.g. a CLAUDE.md). The bool is false
+// when the id is unknown or the artifact has no readable local root.
+func artifactRoot(inv lockfile.Lockfile, id string) (string, bool) {
+	for _, e := range inv.Artifacts {
+		if e.ID != id {
+			continue
+		}
+		ref := e.Source.Ref
+		if ref == "" {
+			ref = e.DiscoveredFrom
+		}
+		if ref == "" {
+			return "", false
+		}
+		if info, err := os.Stat(ref); err == nil && !info.IsDir() {
+			return filepath.Dir(ref), true // single-file artifact: root is its dir
+		}
+		return ref, true
+	}
+	return "", false
+}
+
+// resolveWithinRoot resolves a relative file against root and verifies the
+// result — symlinks resolved — stays inside root, rejecting absolute paths and
+// `..` escapes. This is the guard that keeps the source endpoint confined.
+func resolveWithinRoot(root, rel string) (string, error) {
+	if filepath.IsAbs(rel) {
+		return "", errors.New("absolute path not allowed")
+	}
+	clean := filepath.Clean(rel)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", errors.New("path escapes artifact root")
+	}
+	target := filepath.Join(root, clean)
+
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		realRoot = filepath.Clean(root)
+	}
+	realTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		realTarget = target // file may not exist; fall back to the lexical path
+	}
+	if realTarget != realRoot && !strings.HasPrefix(realTarget, realRoot+string(filepath.Separator)) {
+		return "", errors.New("path escapes artifact root")
+	}
+	return realTarget, nil
 }
 
 // inventoryHashes collects the content hashes of the current inventory, the keys
