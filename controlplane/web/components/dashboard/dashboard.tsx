@@ -535,7 +535,9 @@ function FindingsPanel({
                         artifactId: f.artifactId,
                         file: f.file!,
                         focusLine: f.line,
-                        highlights: [{ line: f.line ?? 0, title: f.title, severity: f.severity }],
+                        highlights: [
+                          { line: f.line ?? 0, title: f.title, severity: f.severity, snippet: f.evidence },
+                        ],
                       })
                     }
                     className="mt-2 font-mono text-[11px] text-primary underline-offset-2 hover:underline"

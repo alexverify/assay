@@ -1,32 +1,43 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import { X } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { X, ChevronUp, ChevronDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 // CodeTarget identifies the file to open and where to anchor it. highlights are
-// the finding lines to mark (used by the highlighting slice); focusLine is the
-// line scrolled into view on open.
+// the finding lines to mark; focusLine is the line scrolled into view on open.
+// snippet lets the view degrade to the stored evidence when the file can't be
+// read (e.g. a remote artifact whose bytes weren't captured).
 export interface CodeTarget {
   artifactId: string
   file: string
   focusLine?: number
-  highlights?: { line: number; title: string; severity: string }[]
+  highlights?: { line: number; title: string; severity: string; snippet?: string }[]
 }
 
 // CodeView is a modal overlay that shows one artifact file with line numbers,
-// fetched live from the loopback backend (GET /api/source). It scrolls the
-// flagged line into view and closes on Esc or a backdrop click. Rendering the
-// finding highlights themselves is layered on in a later slice.
+// fetched live from the loopback backend (GET /api/source). It marks the flagged
+// lines, scrolls the active one into view, lets you step between findings in the
+// same file, and falls back to the stored snippets when the file is unreadable.
+// Closes on Esc or a backdrop click.
 export function CodeView({ target, onClose }: { target: CodeTarget | null; onClose: () => void }) {
   const [content, setContent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [activeLine, setActiveLine] = useState<number | undefined>(undefined)
   const focusRef = useRef<HTMLDivElement | null>(null)
+
+  // The flagged lines, de-duplicated and ordered, drive prev/next navigation.
+  const navLines = useMemo(() => {
+    const set = new Set<number>()
+    for (const h of target?.highlights ?? []) if (h.line > 0) set.add(h.line)
+    return [...set].sort((a, b) => a - b)
+  }, [target])
 
   useEffect(() => {
     if (!target) return
     setContent(null)
     setError(null)
+    setActiveLine(target.focusLine)
     const url = `/api/source?id=${encodeURIComponent(target.artifactId)}&file=${encodeURIComponent(target.file)}`
     fetch(url)
       .then(async (r) => {
@@ -46,17 +57,25 @@ export function CodeView({ target, onClose }: { target: CodeTarget | null; onClo
     return () => window.removeEventListener("keydown", onKey)
   }, [target, onClose])
 
-  // Once the file renders, bring the flagged line to the middle of the viewport.
+  // Bring the active flagged line to the middle of the viewport on open and on
+  // every prev/next step.
   useEffect(() => {
     if (content !== null) focusRef.current?.scrollIntoView({ block: "center" })
-  }, [content])
+  }, [content, activeLine])
 
   if (!target) return null
+
   const lines = content === null ? [] : content.split("\n")
-  // Index highlights by line so each rendered row knows whether it's flagged.
   const marks = new Map<number, { title: string; severity: string }>()
   for (const h of target.highlights ?? []) {
     if (h.line > 0) marks.set(h.line, { title: h.title, severity: h.severity })
+  }
+
+  const idx = activeLine ? navLines.indexOf(activeLine) : -1
+  const step = (delta: number) => {
+    if (navLines.length === 0) return
+    const next = idx < 0 ? 0 : (idx + delta + navLines.length) % navLines.length
+    setActiveLine(navLines[next])
   }
 
   return (
@@ -68,30 +87,55 @@ export function CodeView({ target, onClose }: { target: CodeTarget | null; onClo
         onClick={(e) => e.stopPropagation()}
         className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-xl"
       >
-        <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-          <span className="font-mono text-sm text-foreground">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5">
+          <span className="min-w-0 truncate font-mono text-sm text-foreground">
             {target.file}
-            {target.focusLine ? <span className="text-muted-foreground">:{target.focusLine}</span> : null}
+            {activeLine ? <span className="text-muted-foreground">:{activeLine}</span> : null}
           </span>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {navLines.length > 1 ? (
+              <>
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  {Math.max(idx, 0) + 1}/{navLines.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => step(-1)}
+                  aria-label="Previous finding"
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <ChevronUp className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => step(1)}
+                  aria-label="Next finding"
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </button>
+              </>
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
         <div className="overflow-auto">
-          {error ? (
-            <p className="p-4 font-mono text-xs text-sev-high">{error}</p>
-          ) : content === null ? (
+          {content === null && error === null ? (
             <p className="p-4 font-mono text-xs text-muted-foreground">loading…</p>
+          ) : error !== null ? (
+            <SnippetFallback target={target} error={error} />
           ) : (
             <pre className="py-2 font-mono text-xs leading-relaxed">
               {lines.map((ln, i) => {
                 const n = i + 1
-                const isFocus = n === target.focusLine
+                const isFocus = n === activeLine
                 const mark = marks.get(n)
                 return (
                   <div
@@ -99,8 +143,7 @@ export function CodeView({ target, onClose }: { target: CodeTarget | null; onClo
                     ref={isFocus ? focusRef : undefined}
                     className={cn(
                       "flex px-2",
-                      mark && "bg-sev-high/10",
-                      mark && "border-l-2 border-sev-high",
+                      mark && "border-l-2 border-sev-high bg-sev-high/10",
                       isFocus && mark && "bg-sev-high/20",
                     )}
                   >
@@ -125,6 +168,34 @@ export function CodeView({ target, onClose }: { target: CodeTarget | null; onClo
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// SnippetFallback renders the stored evidence for each finding when the file
+// itself can't be read, so the view still shows the flagged code in context of
+// its line and rule rather than just an error.
+function SnippetFallback({ target, error }: { target: CodeTarget; error: string }) {
+  const withSnippet = (target.highlights ?? []).filter((h) => h.snippet)
+  return (
+    <div className="space-y-3 p-4">
+      <p className="font-mono text-[11px] text-muted-foreground">
+        Couldn&apos;t load the file ({error}). Showing the stored evidence instead.
+      </p>
+      {withSnippet.length === 0 ? (
+        <p className="font-mono text-xs text-muted-foreground">No snippet captured for this finding.</p>
+      ) : (
+        withSnippet.map((h, i) => (
+          <div key={i} className="rounded-md border border-sev-high/40 bg-sev-high/10 p-3">
+            <p className="font-mono text-[11px] text-sev-high">
+              {target.file}:{h.line} · {h.title}
+            </p>
+            <code className="mt-2 block overflow-x-auto whitespace-pre-wrap break-words font-mono text-xs text-foreground">
+              {h.snippet}
+            </code>
+          </div>
+        ))
+      )}
     </div>
   )
 }

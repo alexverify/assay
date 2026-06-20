@@ -611,7 +611,7 @@ function Findings({
   const highlightsFor = (file: string) =>
     a.findings
       .filter((f) => f.file === file)
-      .map((f) => ({ line: f.line ?? 0, title: f.title, severity: f.severity }))
+      .map((f) => ({ line: f.line ?? 0, title: f.title, severity: f.severity, snippet: f.evidence }))
   if (a.findings.length === 0) {
     return (
       <Section title="Findings">
