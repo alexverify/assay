@@ -278,8 +278,8 @@ func BuildScan(current, locked lockfile.Lockfile, approved map[string]bool, used
 			CertSPKI:       e.Source.CertSPKI,
 			Capabilities: DashCapabilities{
 				Exec:              e.Capabilities.Exec,
-				Network:           e.Capabilities.Network,
-				Filesystem:        e.Capabilities.Filesystem,
+				Network:           orEmpty(e.Capabilities.Network),
+				Filesystem:        orEmpty(e.Capabilities.Filesystem),
 				ExecNewlyAdded:    capDiff.ExecAdded,
 				AddedNetwork:      capDiff.NetworkAdded,
 				RemovedNetwork:    capDiff.NetworkRemoved,
@@ -713,6 +713,16 @@ func mapFindings(fs []finding.Finding, live risk.Liveness, locked lockfile.Entry
 		out = append(out, df)
 	}
 	return out
+}
+
+// orEmpty returns a non-nil slice so the JSON encodes [] rather than null —
+// the dashboard's TS types treat these as always-present arrays, and a null
+// crashes the capability view.
+func orEmpty(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // findAck returns the "flagged safe" sign-off for a finding key on the locked

@@ -561,7 +561,10 @@ function DiffHunks({ diff }: { diff: LineDiff }) {
 function Capabilities({ a }: { a: Artifact }) {
   const c = a.capabilities
   if (!c) return null
-  const none = !c.exec && c.network.length === 0 && c.filesystem.length === 0
+  // The API may serialize empty capability lists as null; treat them as empty.
+  const network = c.network ?? []
+  const filesystem = c.filesystem ?? []
+  const none = !c.exec && network.length === 0 && filesystem.length === 0
   const expanded =
     c.execNewlyAdded || (c.addedNetwork?.length ?? 0) > 0 || (c.addedFilesystem?.length ?? 0) > 0
   return (
@@ -588,8 +591,8 @@ function Capabilities({ a }: { a: Artifact }) {
       ) : (
         <div className="flex flex-col gap-1.5">
           <Row label="Executes commands" value={c.exec ? "yes" : "no"} />
-          {c.network.length > 0 ? <Row label="Network" value={c.network.join(", ")} mono /> : null}
-          {c.filesystem.length > 0 ? <Row label="Filesystem" value={c.filesystem.join(", ")} mono /> : null}
+          {network.length > 0 ? <Row label="Network" value={network.join(", ")} mono /> : null}
+          {filesystem.length > 0 ? <Row label="Filesystem" value={filesystem.join(", ")} mono /> : null}
         </div>
       )}
     </Section>

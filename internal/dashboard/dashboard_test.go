@@ -959,6 +959,25 @@ func TestFindingSafeStaleWhenContentChanged(t *testing.T) {
 	}
 }
 
+func TestScanEmitsEmptyCapabilityArraysNotNull(t *testing.T) {
+	// A subagent with no network/filesystem capabilities must serialize [] (not
+	// null), or the dashboard's capability view crashes on .length.
+	art := artifact.Artifact{ID: "a1", Tool: "claude-code", Type: artifact.TypeSubagent, Name: "seo-local"}
+	current := lockfile.Build([]artifact.Artifact{art}, time.Unix(0, 0).UTC(), "t")
+	srv := dashboard.New(dashboard.Deps{
+		Inventory: func(context.Context) (lockfile.Lockfile, error) { return current, nil },
+		Locked:    func(context.Context) (lockfile.Lockfile, error) { return lockfile.Lockfile{}, nil },
+	})
+	// Decode into raw JSON so a null vs [] distinction is visible.
+	var raw map[string]any
+	json.Unmarshal(get(t, srv.Handler(), "/api/scan").Body.Bytes(), &raw)
+	arts := raw["artifacts"].([]any)
+	caps := arts[0].(map[string]any)["capabilities"].(map[string]any)
+	if caps["network"] == nil || caps["filesystem"] == nil {
+		t.Fatalf("capability arrays must be [] not null, got network=%v filesystem=%v", caps["network"], caps["filesystem"])
+	}
+}
+
 func TestFindingSafeTokenGuard(t *testing.T) {
 	srv := testServer(t) // no Mutate dep
 	rec := postJSON(t, srv.Handler(), "/api/finding-safe", srv.Token(), `{"id":"a1","key":"k","on":true}`)
