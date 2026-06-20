@@ -602,6 +602,16 @@ func TestTokenEndpoint(t *testing.T) {
 // one already-locked artifact. It returns the server and a pointer to the live
 // lockfile that Mutate persists into.
 func accountServer(t *testing.T) (*dashboard.Server, *lockfile.Lockfile) {
+	return newAccountServer(t, nil)
+}
+
+// accountSignedServer wires a fake signer so approvals get a signature, exactly
+// as the CLI does with the local key.
+func accountSignedServer(t *testing.T) (*dashboard.Server, *lockfile.Lockfile) {
+	return newAccountServer(t, func(e lockfile.Entry) (string, error) { return "sig-" + e.ID, nil })
+}
+
+func newAccountServer(t *testing.T, signer func(lockfile.Entry) (string, error)) (*dashboard.Server, *lockfile.Lockfile) {
 	t.Helper()
 	current := lockfile.Build([]artifact.Artifact{
 		{ID: "locked", Tool: "claude-code", Type: artifact.TypeMCPServer, Name: "github",
@@ -621,6 +631,7 @@ func accountServer(t *testing.T) (*dashboard.Server, *lockfile.Lockfile) {
 		Mutate: func(ctx context.Context, fn func(*lockfile.Lockfile) error) error {
 			return fn(&locked)
 		},
+		SignApproval: signer,
 	})
 	return srv, &locked
 }
@@ -713,6 +724,44 @@ func TestAccountAllTokenGuardAndReadOnly(t *testing.T) {
 	ro := testServer(t) // no Mutate dep
 	if rec := postJSON(t, ro.Handler(), "/api/account-all", ro.Token(), ``); rec.Code != http.StatusForbidden {
 		t.Fatalf("read-only → 403, got %d", rec.Code)
+	}
+}
+
+func TestApproveSignsWhenSignerWired(t *testing.T) {
+	srv, locked := accountSignedServer(t)
+	rec := postJSON(t, srv.Handler(), "/api/approve", srv.Token(), `{"id":"shadow1","on":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("approve = %d (%s)", rec.Code, rec.Body.String())
+	}
+	e := entryByID(locked, "shadow1")
+	if e == nil || e.Approval == nil || e.Approval.Sig == "" {
+		t.Fatalf("approval should carry a signature when a signer is wired, got %+v", e.Approval)
+	}
+}
+
+func TestApproveUnsignedWhenNoSigner(t *testing.T) {
+	srv, locked := accountServer(t) // no SignApproval dep
+	postJSON(t, srv.Handler(), "/api/approve", srv.Token(), `{"id":"shadow1","on":true}`)
+	e := entryByID(locked, "shadow1")
+	if e == nil || e.Approval == nil {
+		t.Fatal("shadow1 should be approved")
+	}
+	if e.Approval.Sig != "" {
+		t.Fatalf("approval must stay unsigned without a signer, got sig %q", e.Approval.Sig)
+	}
+}
+
+func TestAccountAllSignsEachWhenSignerWired(t *testing.T) {
+	srv, locked := accountSignedServer(t)
+	rec := postJSON(t, srv.Handler(), "/api/account-all", srv.Token(), ``)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("account-all = %d (%s)", rec.Code, rec.Body.String())
+	}
+	for _, id := range []string{"shadow1", "shadow2"} {
+		e := entryByID(locked, id)
+		if e == nil || e.Approval == nil || e.Approval.Sig == "" {
+			t.Fatalf("%s should be approved and signed, got %+v", id, e.Approval)
+		}
 	}
 }
 

@@ -52,6 +52,11 @@ type Deps struct {
 	// backing the approve/quarantine/freeze write endpoints. Optional: when nil,
 	// those endpoints are disabled and the dashboard is strictly read-only.
 	Mutate func(ctx context.Context, fn func(lf *lockfile.Lockfile) error) error
+	// SignApproval returns a detached signature over an entry's approval binding
+	// (ID + content hash), produced with the local signing key, so a dashboard
+	// approval is Verified rather than merely Unsigned — no separate `assay sign`.
+	// Optional: when nil, dashboard approvals are recorded unsigned.
+	SignApproval func(e lockfile.Entry) (string, error)
 	// Policy returns the committed policy, backing the Policy tab and the egress
 	// allowlist view. Optional: when nil, GET /api/policy returns the default.
 	Policy func(context.Context) (policy.Policy, error)
@@ -274,10 +279,25 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 	s.mutate(w, r, func(e *lockfile.Entry, on bool) {
 		if on {
 			e.Approval = &lockfile.Approval{Status: "approved", By: "dashboard"}
+			s.signApproval(e)
 		} else {
 			e.Approval = nil
 		}
 	})
+}
+
+// signApproval attaches a signature to an approved entry when a local signing
+// key is wired, so the approval reads as Verified instead of Unsigned without a
+// separate `assay sign` step. The signature commits to the entry's current
+// content hash, so it must run after the hash is set. Best-effort: a missing key
+// or signing error leaves the approval unsigned and never blocks the approve.
+func (s *Server) signApproval(e *lockfile.Entry) {
+	if s.deps.SignApproval == nil || e.Approval == nil {
+		return
+	}
+	if sig, err := s.deps.SignApproval(*e); err == nil {
+		e.Approval.Sig = sig
+	}
 }
 
 func (s *Server) handleQuarantine(w http.ResponseWriter, r *http.Request) {
@@ -315,7 +335,9 @@ func (s *Server) handleAccountAll(w http.ResponseWriter, r *http.Request) {
 		shadows := shadowEntries(live, *lf)
 		for _, e := range shadows {
 			lf.Artifacts = append(lf.Artifacts, e)
-			lf.Artifacts[len(lf.Artifacts)-1].Approval = &lockfile.Approval{Status: "approved", By: "dashboard"}
+			added := &lf.Artifacts[len(lf.Artifacts)-1]
+			added.Approval = &lockfile.Approval{Status: "approved", By: "dashboard"}
+			s.signApproval(added)
 		}
 		count = len(shadows)
 		return nil

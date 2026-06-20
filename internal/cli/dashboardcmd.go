@@ -13,6 +13,7 @@ import (
 	"github.com/alexverify/assay/internal/adapters/lockstore"
 	"github.com/alexverify/assay/internal/adapters/policystore"
 	"github.com/alexverify/assay/internal/adapters/repstore"
+	"github.com/alexverify/assay/internal/adapters/sign"
 	"github.com/alexverify/assay/internal/adapters/snapshotstore"
 	"github.com/alexverify/assay/internal/app/ports"
 	"github.com/alexverify/assay/internal/client"
@@ -86,6 +87,16 @@ func (a *App) runDashboard(ctx context.Context, args []string) int {
 				return err
 			}
 			return store.Write(ctx, *c.lockfile, lf)
+		},
+		SignApproval: func(e lockfile.Entry) (string, error) {
+			// Sign with the local key (minting it on first approve) so dashboard
+			// approvals are Verified, not just Unsigned — the same act as
+			// `assay approve --sign`, on a loopback surface the user already owns.
+			signer, err := sign.LoadOrCreate(a.keyPath())
+			if err != nil {
+				return "", err
+			}
+			return signer.SignApproval(e)
 		},
 		Policy: func(context.Context) (policy.Policy, error) {
 			p, _, err := policystore.Load(*policyPath)

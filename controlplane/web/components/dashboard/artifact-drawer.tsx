@@ -96,7 +96,7 @@ function DrawerBody({
               <EyeOff className="h-3 w-3" /> unaccounted
             </span>
           ) : null}
-          <DriftBadge status={a.drift} />
+          <DriftBadge status={a.drift} approved={a.approval?.status === "approved"} />
           <button
             onClick={onClose}
             aria-label="Close"

@@ -413,7 +413,7 @@ function InventoryPanel({
                 <span>{a.verdict ? <VerdictBadge verdict={a.verdict} score={a.trust} /> : null}</span>
                 <span className="truncate font-mono text-xs text-muted-foreground">{a.hash}</span>
                 <span>
-                  <DriftBadge status={a.drift} />
+                  <DriftBadge status={a.drift} approved={a.approval?.status === "approved"} />
                 </span>
                 <span className="md:text-right">
                   {sev ? (
@@ -558,7 +558,7 @@ function DriftPanel({ drifted: rows, updated }: { drifted: Artifact[]; updated: 
                   <span className="font-mono text-sm font-medium text-foreground">{a.name}</span>
                   <span className="text-xs text-muted-foreground">{a.driftDetail}</span>
                 </div>
-                <DriftBadge status={a.drift} />
+                <DriftBadge status={a.drift} approved={a.approval?.status === "approved"} />
               </div>
             ))}
           </div>
@@ -584,7 +584,7 @@ function DriftPanel({ drifted: rows, updated }: { drifted: Artifact[]; updated: 
                       {a.agent} · v{a.version}
                     </span>
                   </div>
-                  <DriftBadge status={a.drift} />
+                  <DriftBadge status={a.drift} approved={a.approval?.status === "approved"} />
                 </div>
                 {a.driftDetail ? (
                   <p className="mt-2 text-xs text-sev-critical">{a.driftDetail}</p>
@@ -657,7 +657,7 @@ function ChangesPanel({
             </div>
             <div className="flex items-center gap-2">
               {a.verdict ? <VerdictBadge verdict={a.verdict} score={a.trust} /> : null}
-              <DriftBadge status={a.drift} />
+              <DriftBadge status={a.drift} approved={a.approval?.status === "approved"} />
             </div>
           </div>
           {a.driftDetail ? (

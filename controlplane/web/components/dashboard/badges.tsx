@@ -19,18 +19,24 @@ export function SeverityBadge({ severity }: { severity: Severity }) {
   )
 }
 
-export function DriftBadge({ status }: { status: DriftStatus }) {
+export function DriftBadge({ status, approved }: { status: DriftStatus; approved?: boolean }) {
   const d = DRIFT_STYLES[status]
+  // An approved-but-unsigned artifact is a softer state than a never-approved
+  // one: the approve succeeded, only the signature is missing. Relabel it so it
+  // doesn't read as a problem, and drop the urgent palette down to "updated".
+  const approvedUnsigned = status === "unsigned" && approved
+  const style = approvedUnsigned ? DRIFT_STYLES.updated : d
   return (
     <span
       className={cn(
         "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 font-mono text-[11px] font-medium",
-        d.bg,
-        d.border,
-        d.text,
+        style.bg,
+        style.border,
+        style.text,
       )}
+      title={approvedUnsigned ? "Approved from the dashboard but not yet signed by a trusted key." : undefined}
     >
-      {d.label}
+      {approvedUnsigned ? "Approved · unsigned" : d.label}
     </span>
   )
 }
