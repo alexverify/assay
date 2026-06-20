@@ -57,6 +57,30 @@ type Entry struct {
 	// Frozen pins an artifact: any drift on it (update, mutation, or broken
 	// integrity) is a hard policy violation, not a reviewable change.
 	Frozen bool `json:"frozen,omitempty"`
+	// SafeFindings records per-finding "accepted false positive" sign-offs: a
+	// finding flagged safe stays visible but no longer fails the policy gate.
+	SafeFindings []FindingAck `json:"safeFindings,omitempty"`
+}
+
+// FindingAck marks one finding as an accepted false positive ("flagged safe").
+// Key is the stable finding key (see FindingKey); Hash records the artifact's
+// content hash at flag time so the UI can note when the code changed afterwards.
+type FindingAck struct {
+	Key  string    `json:"key"`
+	By   string    `json:"by,omitempty"`
+	At   time.Time `json:"at,omitempty"`
+	Hash string    `json:"hash,omitempty"`
+}
+
+// IsFindingSafe reports whether the given finding key has been flagged safe on
+// this entry.
+func (e Entry) IsFindingSafe(key string) bool {
+	for _, s := range e.SafeFindings {
+		if s.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 // Lockfile is the committed, signable, human-diffable snapshot of an inventory.
@@ -369,29 +393,49 @@ func DiffFiles(prev, cur []artifact.FileRef) FileDiff {
 	return d
 }
 
+// ArtifactFinding tags a finding with the ID of the artifact that carries it, so
+// callers can resolve per-artifact state (e.g. a "flagged safe" acknowledgement).
+type ArtifactFinding struct {
+	ArtifactID string
+	finding.Finding
+}
+
 // NewFindings returns findings present in current but not in locked, at or
 // above the given severity. verify --ci uses this to fail a build on newly
 // introduced critical/high issues without re-flagging accepted ones.
 func NewFindings(locked, current Lockfile, min finding.Severity) []finding.Finding {
+	af := NewFindingsByArtifact(locked, current, min)
+	out := make([]finding.Finding, len(af))
+	for i, x := range af {
+		out[i] = x.Finding
+	}
+	return out
+}
+
+// NewFindingsByArtifact is NewFindings with each finding tagged by its artifact
+// ID, letting the gate look up per-finding "flagged safe" acknowledgements.
+func NewFindingsByArtifact(locked, current Lockfile, min finding.Severity) []ArtifactFinding {
 	lockedByID := locked.byID()
-	var out []finding.Finding
+	var out []ArtifactFinding
 	for _, cur := range current.Artifacts {
 		prev, ok := lockedByID[cur.ID]
 		seen := map[string]bool{}
 		if ok {
 			for _, f := range prev.Findings {
-				seen[findingKey(f)] = true
+				seen[FindingKey(f)] = true
 			}
 		}
 		for _, f := range cur.Findings {
-			if f.Severity.AtLeast(min) && !seen[findingKey(f)] {
-				out = append(out, f)
+			if f.Severity.AtLeast(min) && !seen[FindingKey(f)] {
+				out = append(out, ArtifactFinding{ArtifactID: cur.ID, Finding: f})
 			}
 		}
 	}
 	return out
 }
 
-func findingKey(f finding.Finding) string {
+// FindingKey is the stable identity of a finding within an artifact: its rule,
+// file, and line. Used to match a finding against a "flagged safe" sign-off.
+func FindingKey(f finding.Finding) string {
 	return f.RuleID + "|" + f.File + "|" + strconv.Itoa(f.Line)
 }

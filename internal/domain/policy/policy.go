@@ -127,16 +127,33 @@ func Evaluate(p Policy, locked, current lockfile.Lockfile) Result {
 		ignored[m.Rule] = true
 	}
 
+	// Per-finding "flagged safe" sign-offs live on the locked entry; an acked
+	// finding is an accepted false positive and does not fail the gate.
+	safe := make(map[string]map[string]bool, len(locked.Artifacts))
+	for _, e := range locked.Artifacts {
+		if len(e.SafeFindings) == 0 {
+			continue
+		}
+		m := make(map[string]bool, len(e.SafeFindings))
+		for _, s := range e.SafeFindings {
+			m[s.Key] = true
+		}
+		safe[e.ID] = m
+	}
+
 	var violations []Violation
-	for _, f := range lockfile.NewFindings(locked, current, p.FailOnSeverity) {
-		if ignored[f.RuleID] {
+	for _, af := range lockfile.NewFindingsByArtifact(locked, current, p.FailOnSeverity) {
+		if ignored[af.RuleID] {
+			continue
+		}
+		if safe[af.ArtifactID][lockfile.FindingKey(af.Finding)] {
 			continue
 		}
 		violations = append(violations, Violation{
 			Kind:     "finding",
-			RuleID:   f.RuleID,
-			Severity: f.Severity,
-			Detail:   f.File,
+			RuleID:   af.RuleID,
+			Severity: af.Severity,
+			Detail:   af.File,
 		})
 	}
 

@@ -876,6 +876,93 @@ func TestAccountAllSignsEachWhenSignerWired(t *testing.T) {
 	}
 }
 
+func TestFindingSafeFlagPersistsAndShows(t *testing.T) {
+	f := finding.Finding{RuleID: "SECRET-PATH", Severity: finding.SeverityHigh, File: "SKILL.md", Line: 6}
+	art := artifact.Artifact{ID: "a1", Tool: "claude-code", Type: artifact.TypeSkill, Name: "demo",
+		ContentHash: "sha256-1", Findings: []finding.Finding{f}}
+	current := lockfile.Build([]artifact.Artifact{art}, time.Unix(0, 0).UTC(), "t")
+	locked := lockfile.Build([]artifact.Artifact{art}, time.Unix(0, 0).UTC(), "t")
+	srv := dashboard.New(dashboard.Deps{
+		Inventory: func(context.Context) (lockfile.Lockfile, error) { return current, nil },
+		Locked:    func(context.Context) (lockfile.Lockfile, error) { return locked, nil },
+		Mutate: func(ctx context.Context, fn func(*lockfile.Lockfile) error) error {
+			if err := fn(&locked); err != nil {
+				return err
+			}
+			return nil
+		},
+	})
+	h := srv.Handler()
+	key := lockfile.FindingKey(f)
+
+	// Flag it safe.
+	rec := postJSON(t, h, "/api/finding-safe", srv.Token(), `{"id":"a1","key":"`+key+`","on":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("flag safe = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !locked.Artifacts[0].IsFindingSafe(key) {
+		t.Fatal("the finding should be recorded safe on the entry")
+	}
+
+	// The scan view reflects it as safe.
+	var scan struct {
+		Artifacts []struct {
+			Findings []struct {
+				Safe      bool `json:"safe"`
+				SafeStale bool `json:"safeStale"`
+			} `json:"findings"`
+		} `json:"artifacts"`
+	}
+	json.Unmarshal(get(t, h, "/api/scan").Body.Bytes(), &scan)
+	if !scan.Artifacts[0].Findings[0].Safe {
+		t.Fatal("scan view should mark the finding safe")
+	}
+
+	// Un-flag.
+	postJSON(t, h, "/api/finding-safe", srv.Token(), `{"id":"a1","key":"`+key+`","on":false}`)
+	if locked.Artifacts[0].IsFindingSafe(key) {
+		t.Fatal("the safe flag should be cleared")
+	}
+}
+
+func TestFindingSafeStaleWhenContentChanged(t *testing.T) {
+	f := finding.Finding{RuleID: "SECRET-PATH", Severity: finding.SeverityHigh, File: "SKILL.md", Line: 6}
+	key := lockfile.FindingKey(f)
+	// Locked entry was flagged at an older hash; the live artifact has a new one.
+	lockedArt := artifact.Artifact{ID: "a1", Tool: "claude-code", Type: artifact.TypeSkill, Name: "demo",
+		ContentHash: "sha256-OLD", Findings: []finding.Finding{f}}
+	lockedEntry := lockfile.Entry{Artifact: lockedArt, SafeFindings: []lockfile.FindingAck{{Key: key, Hash: "sha256-OLD"}}}
+	locked := lockfile.Lockfile{Version: lockfile.Version, Artifacts: []lockfile.Entry{lockedEntry}}
+	curArt := lockedArt
+	curArt.ContentHash = "sha256-NEW"
+	current := lockfile.Build([]artifact.Artifact{curArt}, time.Unix(0, 0).UTC(), "t")
+	srv := dashboard.New(dashboard.Deps{
+		Inventory: func(context.Context) (lockfile.Lockfile, error) { return current, nil },
+		Locked:    func(context.Context) (lockfile.Lockfile, error) { return locked, nil },
+	})
+	var scan struct {
+		Artifacts []struct {
+			Findings []struct {
+				Safe      bool `json:"safe"`
+				SafeStale bool `json:"safeStale"`
+			} `json:"findings"`
+		} `json:"artifacts"`
+	}
+	json.Unmarshal(get(t, srv.Handler(), "/api/scan").Body.Bytes(), &scan)
+	got := scan.Artifacts[0].Findings[0]
+	if !got.Safe || !got.SafeStale {
+		t.Fatalf("a flag at an older hash should be safe+stale, got %+v", got)
+	}
+}
+
+func TestFindingSafeTokenGuard(t *testing.T) {
+	srv := testServer(t) // no Mutate dep
+	rec := postJSON(t, srv.Handler(), "/api/finding-safe", srv.Token(), `{"id":"a1","key":"k","on":true}`)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("read-only finding-safe should be 403, got %d", rec.Code)
+	}
+}
+
 func TestApproveLockedArtifactStillWorks(t *testing.T) {
 	srv, locked := accountServer(t)
 	rec := postJSON(t, srv.Handler(), "/api/approve", srv.Token(), `{"id":"locked","on":true}`)

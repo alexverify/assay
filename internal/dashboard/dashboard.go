@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/alexverify/assay/internal/adapters/auditlog"
 	"github.com/alexverify/assay/internal/app/ports"
@@ -141,6 +142,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/quarantine", s.handleQuarantine)
 	mux.HandleFunc("/api/freeze", s.handleFreeze)
 	mux.HandleFunc("/api/account-all", s.handleAccountAll)
+	mux.HandleFunc("/api/finding-safe", s.handleFindingSafe)
 	mux.HandleFunc("/api/policy", s.handlePolicy)
 	mux.HandleFunc("/api/mute", s.handleMute)
 	mux.HandleFunc("/api/egress-allow", s.handleEgressAllow)
@@ -517,6 +519,85 @@ func (s *Server) mutate(w http.ResponseWriter, r *http.Request, set func(*lockfi
 	writeJSON(w, struct {
 		Status string `json:"status"`
 	}{Status: "ok"})
+}
+
+// safeRequest flags (or clears) one finding as an accepted false positive.
+type safeRequest struct {
+	ID  string `json:"id"`
+	Key string `json:"key"`
+	On  bool   `json:"on"`
+}
+
+// handleFindingSafe records or clears a per-finding "flagged safe" sign-off on
+// the artifact's lockfile entry. A flagged finding stays visible but no longer
+// fails the policy gate. Token-guarded; persists via Deps.Mutate.
+func (s *Server) handleFindingSafe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.Header.Get("X-Assay-Token") != s.token || s.token == "" {
+		http.Error(w, "missing or invalid write token", http.StatusForbidden)
+		return
+	}
+	if s.deps.Mutate == nil {
+		http.Error(w, "dashboard is read-only (no lockfile to write)", http.StatusForbidden)
+		return
+	}
+	var body safeRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" || body.Key == "" {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	// The content hash at flag time comes from the live inventory, so the UI can
+	// later note when the flagged code changed.
+	curHash := ""
+	if inv, err := s.deps.Inventory(r.Context()); err == nil {
+		for _, e := range inv.Artifacts {
+			if e.ID == body.ID {
+				curHash = e.ContentHash
+				break
+			}
+		}
+	}
+	found := false
+	err := s.deps.Mutate(r.Context(), func(lf *lockfile.Lockfile) error {
+		for i := range lf.Artifacts {
+			if lf.Artifacts[i].ID != body.ID {
+				continue
+			}
+			found = true
+			setFindingSafe(&lf.Artifacts[i], body.Key, body.On, curHash)
+			return nil
+		}
+		return nil
+	})
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	if !found {
+		http.Error(w, "artifact not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, struct {
+		Status string `json:"status"`
+	}{Status: "ok"})
+}
+
+// setFindingSafe adds or removes a finding's safe sign-off on an entry,
+// idempotently.
+func setFindingSafe(e *lockfile.Entry, key string, on bool, hash string) {
+	out := e.SafeFindings[:0:0]
+	for _, s := range e.SafeFindings {
+		if s.Key != key {
+			out = append(out, s)
+		}
+	}
+	if on {
+		out = append(out, lockfile.FindingAck{Key: key, By: "dashboard", At: time.Now().UTC(), Hash: hash})
+	}
+	e.SafeFindings = out
 }
 
 // handleHistory serves the posture trend (E2) for the dashboard sparkline.

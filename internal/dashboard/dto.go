@@ -178,6 +178,18 @@ type DashFinding struct {
 	File string `json:"file,omitempty"`
 	Line int    `json:"line,omitempty"`
 
+	// Safe marks a finding flagged as an accepted false positive: it stays shown
+	// (severity and all) but is badged "flagged safe" and passes the CI gate.
+	// SafeBy/SafeAt record the sign-off; SafeStale is true when the content
+	// changed since it was flagged (the flag persists but is worth re-checking).
+	Safe      bool   `json:"safe,omitempty"`
+	SafeBy    string `json:"safeBy,omitempty"`
+	SafeAt    string `json:"safeAt,omitempty"`
+	SafeStale bool   `json:"safeStale,omitempty"`
+	// Key is the finding's stable identity (rule|file|line), sent back to the
+	// flag-safe endpoint.
+	Key string `json:"key,omitempty"`
+
 	// Capability × usage fusion (F3): how exercised the carrying artifact is
 	// (live | exercised | unknown), and the fused urgency rank that lifts a
 	// finding on code that actually runs above the same finding on dormant code.
@@ -255,7 +267,7 @@ func BuildScan(current, locked lockfile.Lockfile, approved map[string]bool, used
 			Hash:           e.ContentHash,
 			LockedHash:     prev.ContentHash,
 			Drift:          driftStatus(class, hasLocked, approved[e.ID]),
-			Findings:       mapFindings(e.Findings, live),
+			Findings:       mapFindings(e.Findings, live, prev, e.ContentHash),
 			Scope:          e.Scope,
 			SourceKind:     string(e.Source.Kind),
 			DiscoveredFrom: e.DiscoveredFrom,
@@ -671,11 +683,13 @@ func versionOf(s artifact.Source) string {
 	}
 }
 
-func mapFindings(fs []finding.Finding, live risk.Liveness) []DashFinding {
+func mapFindings(fs []finding.Finding, live risk.Liveness, locked lockfile.Entry, curHash string) []DashFinding {
 	out := make([]DashFinding, 0, len(fs))
 	for _, f := range fs {
-		out = append(out, DashFinding{
-			ID:       f.RuleID + "|" + f.File + "|" + strconv.Itoa(f.Line),
+		key := lockfile.FindingKey(f)
+		df := DashFinding{
+			ID:       key,
+			Key:      key,
 			RuleID:   f.RuleID,
 			Pattern:  patternOf(f.RuleID),
 			Severity: severityOf(f.Severity),
@@ -689,9 +703,27 @@ func mapFindings(fs []finding.Finding, live risk.Liveness) []DashFinding {
 			Liveness: string(live),
 			RiskRank: risk.Rank(f.Severity, live),
 			Reach:    string(reach.Classify(f.File)),
-		})
+		}
+		if ack := findAck(locked, key); ack != nil {
+			df.Safe = true
+			df.SafeBy = ack.By
+			df.SafeAt = relativeStamp(ack.At)
+			df.SafeStale = ack.Hash != "" && curHash != "" && ack.Hash != curHash
+		}
+		out = append(out, df)
 	}
 	return out
+}
+
+// findAck returns the "flagged safe" sign-off for a finding key on the locked
+// entry, or nil when the finding is not flagged.
+func findAck(locked lockfile.Entry, key string) *lockfile.FindingAck {
+	for i := range locked.SafeFindings {
+		if locked.SafeFindings[i].Key == key {
+			return &locked.SafeFindings[i]
+		}
+	}
+	return nil
 }
 
 func severityOf(s finding.Severity) string {

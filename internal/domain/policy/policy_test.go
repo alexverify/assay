@@ -64,6 +64,24 @@ func TestEvaluateMutedRuleWithRationaleIsSuppressed(t *testing.T) {
 	}
 }
 
+func TestEvaluateSkipsFindingFlaggedSafe(t *testing.T) {
+	f := finding.Finding{RuleID: "RCE", Severity: finding.SeverityCritical, File: "x.sh", Line: 3}
+	// The locked entry carries the safe sign-off for that finding key.
+	locked := entry("a", false)
+	locked.SafeFindings = []lockfile.FindingAck{{Key: lockfile.FindingKey(f), By: "dashboard"}}
+	current := lf(entry("a", false, f))
+
+	if !Evaluate(Default(), lf(locked), current).OK() {
+		t.Fatal("a finding flagged safe must not fail the gate")
+	}
+
+	// A different finding on the same artifact still gates.
+	other := finding.Finding{RuleID: "RCE", Severity: finding.SeverityCritical, File: "y.sh", Line: 1}
+	if Evaluate(Default(), lf(locked), lf(entry("a", false, f, other))).OK() {
+		t.Fatal("only the flagged finding should be accepted; others still gate")
+	}
+}
+
 func TestEvaluateRespectsThreshold(t *testing.T) {
 	locked := lf(entry("a", false))
 	current := lf(entry("a", false, finding.Finding{RuleID: "NOTE", Severity: finding.SeverityMedium}))
